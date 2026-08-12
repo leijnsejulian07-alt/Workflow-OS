@@ -1,0 +1,8 @@
+[project]
+name = "workflow-os"
+version = "0.1.0"
+description = "Zero-touch revenue control plane"
+requires-python = ">=3.11"
+
+[tool.unittest]
+start-directory = "tests"

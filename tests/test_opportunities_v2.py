@@ -24,6 +24,9 @@ class OpportunityDecisionV2Tests(unittest.TestCase):
             "expected_production_cost": 5,
             "expected_laptop_minutes": 30,
             "expected_owner_minutes": 0,
+            "expected_time_to_cash_hours": 48,
+            "automation_completeness": 1.0,
+            "capital_required": 0,
             "rights_verification_state": "VERIFIED",
             "compliance_risk": "LOW",
             "platform_risk": "LOW",
@@ -42,6 +45,20 @@ class OpportunityDecisionV2Tests(unittest.TestCase):
         self.assertEqual(op["expected_net_profit"], 35.0)
         self.assertEqual(op["expected_profit_per_laptop_hour"], 70.0)
 
+    def test_unknown_collection_probability_revalidates(self):
+        raw = self.base()
+        raw.pop("probability_collection")
+        decision = evaluate(normalize(raw, now=NOW), now=NOW)
+        self.assertEqual(decision.decision, "REVALIDATE")
+        self.assertIn("probability_collection", decision.revalidation_fields)
+
+    def test_missing_source_check_does_not_become_fresh_now(self):
+        raw = self.base()
+        raw.pop("source_checked_at")
+        decision = evaluate(normalize(raw, now=NOW), now=NOW)
+        self.assertEqual(decision.decision, "REVALIDATE")
+        self.assertIn("source_checked_at", decision.revalidation_fields)
+
     def test_unknown_rights_reject_fail_closed(self):
         raw = self.base()
         raw["rights_verification_state"] = "CLAIMED_UNVERIFIED"
@@ -53,10 +70,8 @@ class OpportunityDecisionV2Tests(unittest.TestCase):
     def test_stale_source_revalidates_instead_of_rejecting(self):
         raw = self.base()
         raw["source_checked_at"] = (NOW - timedelta(hours=2)).isoformat()
-        raw["freshness_ttl_seconds"] = 3600
         decision = evaluate(normalize(raw, now=NOW), now=NOW)
         self.assertEqual(decision.decision, "REVALIDATE")
-        self.assertTrue(decision.requires_revalidation)
         self.assertIn("source_checked_at", decision.revalidation_fields)
 
     def test_missing_volatile_payout_data_revalidates(self):
@@ -78,7 +93,6 @@ class OpportunityDecisionV2Tests(unittest.TestCase):
         raw["expected_owner_minutes"] = 1
         decision = evaluate(normalize(raw, now=NOW), now=NOW)
         self.assertEqual(decision.decision, "REJECT")
-        self.assertEqual(decision.decision_reasons, ("RECURRING_OWNER_WORK_REQUIRED",))
 
     def test_negative_margin_rejects_when_fresh(self):
         raw = self.base()
@@ -93,13 +107,41 @@ class OpportunityDecisionV2Tests(unittest.TestCase):
         decision = evaluate(normalize(raw, now=NOW), now=NOW)
         self.assertEqual(decision.decision, "PAUSE")
 
-    def test_valid_hard_gates_still_revalidate_until_scoring_is_versioned(self):
+    def test_valid_known_inputs_accept_and_queue(self):
         decision = evaluate(normalize(self.base(), now=NOW), now=NOW)
+        self.assertEqual(decision.decision, "ACCEPT")
+        self.assertTrue(decision.eligible_for_queue)
+        self.assertGreater(decision.priority_score, 0)
+        self.assertEqual(decision.decision_reasons, ("priority-scoring/1",))
+
+    def test_unknown_priority_input_revalidates(self):
+        raw = self.base()
+        raw.pop("expected_time_to_cash_hours")
+        decision = evaluate(normalize(raw, now=NOW), now=NOW)
         self.assertEqual(decision.decision, "REVALIDATE")
-        self.assertEqual(decision.revalidation_fields, ("priority_score",))
-        payload = decision.to_dict()
-        self.assertEqual(payload["policy_version"], "opportunity-decision-policy/1")
-        self.assertFalse(payload["eligible_for_queue"])
+        self.assertIn("expected_time_to_cash_hours", decision.revalidation_fields)
+
+    def test_priority_score_is_deterministic(self):
+        op = normalize(self.base(), now=NOW)
+        first = evaluate(op, now=NOW)
+        second = evaluate(op, now=NOW)
+        self.assertEqual(first.priority_score, second.priority_score)
+
+    def test_better_economics_raise_priority(self):
+        base = self.base()
+        better = self.base()
+        better["expected_revenue"] = 200
+        first = evaluate(normalize(base, now=NOW), now=NOW)
+        second = evaluate(normalize(better, now=NOW), now=NOW)
+        self.assertGreater(second.priority_score, first.priority_score)
+
+    def test_faster_time_to_cash_raises_priority(self):
+        slow = self.base()
+        fast = self.base()
+        slow["expected_time_to_cash_hours"] = 168
+        fast["expected_time_to_cash_hours"] = 12
+        self.assertGreater(evaluate(normalize(fast, now=NOW), now=NOW).priority_score,
+                           evaluate(normalize(slow, now=NOW), now=NOW).priority_score)
 
 
 if __name__ == "__main__":

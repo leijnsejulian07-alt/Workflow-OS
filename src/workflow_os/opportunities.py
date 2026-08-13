@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 POLICY_VERSION = "opportunity-decision-policy/1"
+SCORING_VERSION = "priority-scoring/1"
 BLOCKED_CATEGORIES = {"fake_engagement", "unsafe_financial_claims", "unsafe_medical_claims", "spam"}
 ALLOWED_OWNER_ATTENTION = {"NONE", "OWNER_APPROVAL", "KYC", "EXCEPTION", "EMERGENCY"}
 PAUSE_OWNER_ATTENTION = {"OWNER_APPROVAL", "KYC", "EXCEPTION", "EMERGENCY"}
@@ -33,6 +34,14 @@ def _num(value: Any, default: float = 0.0) -> float:
         return n if math.isfinite(n) else default
     except (TypeError, ValueError):
         return default
+
+
+def _known_num(value: Any) -> float | None:
+    try:
+        n = float(value)
+        return n if math.isfinite(n) else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -127,21 +136,26 @@ class OpportunityDecision:
         return data
 
 
+def _risk_penalty(op: dict[str, Any]) -> float:
+    penalty = 0.0
+    for field in ("compliance_risk", "platform_risk"):
+        penalty += {"LOW": 0.0, "MEDIUM": 0.5, "HIGH": 1.0, "BLOCKED": 2.0}.get(str(op.get(field, "MEDIUM")), 1.0)
+    return penalty
+
+
 def _decision(op: dict[str, Any], *, decision: str, reasons: list[str], now: datetime,
-              requires_revalidation: bool = False, revalidation_fields: list[str] | None = None) -> OpportunityDecision:
+              requires_revalidation: bool = False, revalidation_fields: list[str] | None = None,
+              priority_score: float = 0.0) -> OpportunityDecision:
     checked = _parse_dt(op.get("source_checked_at"))
     ttl = max(0, int(_num(op.get("freshness_ttl_seconds"), 0)))
     expiry = checked + timedelta(seconds=ttl) if checked is not None else None
-    risk_penalty = 0.0
-    for field in ("compliance_risk", "platform_risk"):
-        risk_penalty += {"LOW": 0.0, "MEDIUM": 0.5, "HIGH": 1.0, "BLOCKED": 2.0}.get(str(op.get(field, "MEDIUM")), 1.0)
     return OpportunityDecision(
         opportunity_id=str(op.get("opportunity_id") or "unknown"),
         decision=decision,
         decision_reasons=tuple(reasons or ["UNSPECIFIED"]),
         eligible_for_queue=decision == "ACCEPT",
         economic_score=float(_num(op.get("expected_net_profit"))),
-        priority_score=0.0,
+        priority_score=priority_score,
         requires_revalidation=requires_revalidation,
         revalidation_fields=tuple(revalidation_fields or []),
         owner_attention_requirement=str(op.get("user_attention_requirement") or "NONE"),
@@ -149,10 +163,47 @@ def _decision(op: dict[str, Any], *, decision: str, reasons: list[str], now: dat
         expected_net_profit=_num(op.get("expected_net_profit")),
         expected_profit_per_laptop_hour=_num(op.get("expected_profit_per_laptop_hour")),
         estimated_total_cost=max(0.0, _num(op.get("expected_production_cost"))),
-        risk_penalty=risk_penalty,
+        risk_penalty=_risk_penalty(op),
         freshness_expires_at=expiry.isoformat() if expiry is not None else None,
         evaluated_at=now.isoformat(),
     )
+
+
+def _priority_score(op: dict[str, Any]) -> tuple[float | None, list[str]]:
+    required = {
+        "expected_time_to_cash_hours": _known_num(op.get("expected_time_to_cash_hours")),
+        "automation_completeness": _known_num(op.get("automation_completeness")),
+        "capital_required": _known_num(op.get("capital_required")),
+    }
+    missing = [name for name, value in required.items() if value is None]
+    if missing:
+        return None, missing
+    time_to_cash = required["expected_time_to_cash_hours"]
+    automation = required["automation_completeness"]
+    capital = required["capital_required"]
+    assert time_to_cash is not None and automation is not None and capital is not None
+    if time_to_cash < 0 or not 0 <= automation <= 1 or capital < 0:
+        return None, ["priority_score_inputs_invalid"]
+
+    # v1 uses bounded, monotonic transforms. Values are comparable and reproducible,
+    # not predictions of actual cash. Higher profit/automation and lower latency,
+    # risk/capital improve priority while every input remains independently auditable.
+    profit = max(0.0, _num(op.get("expected_net_profit")))
+    collectible = max(0.0, _num(op.get("expected_collectible_revenue")))
+    laptop_profit = max(0.0, _num(op.get("expected_profit_per_laptop_hour")))
+    profit_n = profit / (profit + 100.0)
+    collectible_n = collectible / (collectible + 100.0)
+    laptop_n = laptop_profit / (laptop_profit + 100.0)
+    time_n = 1.0 / (1.0 + time_to_cash / 24.0)
+    capital_n = 1.0 / (1.0 + capital / 100.0)
+    risk_n = max(0.0, 1.0 - _risk_penalty(op) / 4.0)
+    owner_n = 1.0 if str(op.get("user_attention_requirement") or "NONE") == "NONE" else 0.0
+    score = 100.0 * (
+        0.22 * profit_n + 0.12 * collectible_n + 0.18 * laptop_n +
+        0.14 * time_n + 0.14 * automation + 0.10 * risk_n +
+        0.06 * capital_n + 0.04 * owner_n
+    )
+    return round(score, 6), []
 
 
 def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> OpportunityDecision:
@@ -185,14 +236,8 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
         if opportunity.get(field) in (None, "", []):
             stale_fields.append(field)
     if stale_fields:
-        return _decision(
-            opportunity,
-            decision="REVALIDATE",
-            reasons=["VOLATILE_FIELDS_STALE_OR_UNKNOWN"],
-            now=now_dt,
-            requires_revalidation=True,
-            revalidation_fields=stale_fields,
-        )
+        return _decision(opportunity, decision="REVALIDATE", reasons=["VOLATILE_FIELDS_STALE_OR_UNKNOWN"], now=now_dt,
+                         requires_revalidation=True, revalidation_fields=stale_fields)
 
     if _num(opportunity.get("expected_collectible_revenue")) <= 0:
         return _decision(opportunity, decision="REJECT", reasons=["COLLECTIBLE_REVENUE_UNSUPPORTED"], now=now_dt)
@@ -200,17 +245,11 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
         return _decision(opportunity, decision="REJECT", reasons=["NON_POSITIVE_EXPECTED_MARGIN"], now=now_dt)
     if _num(opportunity.get("expected_profit_per_laptop_hour")) <= 0:
         return _decision(opportunity, decision="REJECT", reasons=["NON_POSITIVE_LAPTOP_HOUR_PROFIT"], now=now_dt)
-
     if opportunity.get("duplicate_conflict_status") in {"DUPLICATE", "CONFLICT"}:
         return _decision(opportunity, decision="PAUSE", reasons=["DUPLICATE_OR_CONFLICT"], now=now_dt)
 
-    # Priority normalization is intentionally not invented. Policy requires versioned
-    # normalization functions before queue scoring can be trusted.
-    return _decision(
-        opportunity,
-        decision="REVALIDATE",
-        reasons=["PRIORITY_NORMALIZATION_NOT_VERSIONED"],
-        now=now_dt,
-        requires_revalidation=True,
-        revalidation_fields=["priority_score"],
-    )
+    score, missing = _priority_score(opportunity)
+    if score is None:
+        return _decision(opportunity, decision="REVALIDATE", reasons=["PRIORITY_INPUTS_UNKNOWN_OR_INVALID"], now=now_dt,
+                         requires_revalidation=True, revalidation_fields=missing)
+    return _decision(opportunity, decision="ACCEPT", reasons=[SCORING_VERSION], now=now_dt, priority_score=score)

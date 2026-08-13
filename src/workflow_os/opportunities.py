@@ -60,17 +60,19 @@ def _parse_dt(value: Any) -> datetime | None:
 def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
     now_dt = now or utcnow_dt()
     now_iso = now_dt.isoformat()
-    success = min(1.0, max(0.0, _num(raw.get("estimated_success_probability"), 0.0)))
-    collection = min(1.0, max(0.0, _num(raw.get("probability_collection"), 1.0)))
+    success_raw = _known_num(raw.get("estimated_success_probability"))
+    collection_raw = _known_num(raw.get("probability_collection"))
+    success = min(1.0, max(0.0, success_raw)) if success_raw is not None else None
+    collection = min(1.0, max(0.0, collection_raw)) if collection_raw is not None else None
     gross = max(0.0, _num(raw.get("expected_revenue"), 0.0))
     collectible = raw.get("expected_collectible_revenue")
-    if collectible is None:
+    if collectible is None and success is not None and collection is not None:
         collectible = gross * success * collection
-    collectible = max(0.0, _num(collectible))
+    collectible_num = max(0.0, _num(collectible)) if collectible is not None else None
     cost = max(0.0, _num(raw.get("expected_production_cost"), 0.0))
     minutes = max(0.0, _num(raw.get("expected_laptop_minutes"), 0.0))
-    net = collectible - cost
-    per_hour = net / (minutes / 60.0) if minutes > 0 else net
+    net = collectible_num - cost if collectible_num is not None else None
+    per_hour = (net / (minutes / 60.0) if minutes > 0 else net) if net is not None else None
 
     return {
         **raw,
@@ -89,7 +91,7 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
         "estimated_success_probability": success,
         "probability_collection": collection,
         "expected_revenue": gross,
-        "expected_collectible_revenue": collectible,
+        "expected_collectible_revenue": collectible_num,
         "expected_net_profit": net,
         "expected_laptop_minutes": minutes,
         "expected_owner_minutes": max(0.0, _num(raw.get("expected_owner_minutes"), 0.0)),
@@ -99,8 +101,8 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
         "duplicate_conflict_status": str(raw.get("duplicate_conflict_status") or "UNKNOWN").upper(),
         "user_attention_requirement": str(raw.get("user_attention_requirement") or "NONE").upper(),
         "rights_verification_state": str(raw.get("rights_verification_state") or "UNKNOWN").upper(),
-        "source_checked_at": str(raw.get("source_checked_at") or now_iso),
-        "freshness_ttl_seconds": max(0, int(_num(raw.get("freshness_ttl_seconds"), 3600))),
+        "source_checked_at": raw.get("source_checked_at"),
+        "freshness_ttl_seconds": max(0, int(_num(raw.get("freshness_ttl_seconds"), 0))),
         "deadline": raw.get("deadline"),
         "remaining_budget": raw.get("remaining_budget"),
         "payout_formula": raw.get("payout_formula"),
@@ -185,9 +187,6 @@ def _priority_score(op: dict[str, Any]) -> tuple[float | None, list[str]]:
     if time_to_cash < 0 or not 0 <= automation <= 1 or capital < 0:
         return None, ["priority_score_inputs_invalid"]
 
-    # v1 uses bounded, monotonic transforms. Values are comparable and reproducible,
-    # not predictions of actual cash. Higher profit/automation and lower latency,
-    # risk/capital improve priority while every input remains independently auditable.
     profit = max(0.0, _num(op.get("expected_net_profit")))
     collectible = max(0.0, _num(op.get("expected_collectible_revenue")))
     laptop_profit = max(0.0, _num(op.get("expected_profit_per_laptop_hour")))
@@ -227,9 +226,9 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
     if attention in PAUSE_OWNER_ATTENTION:
         return _decision(opportunity, decision="PAUSE", reasons=[f"OWNER_ATTENTION_{attention}"], now=now_dt)
 
+    stale_fields: list[str] = []
     checked = _parse_dt(opportunity.get("source_checked_at"))
     ttl = max(0, int(_num(opportunity.get("freshness_ttl_seconds"), 0)))
-    stale_fields: list[str] = []
     if checked is None or ttl <= 0 or checked + timedelta(seconds=ttl) <= now_dt:
         stale_fields.append("source_checked_at")
     for field in ("deadline", "remaining_budget", "payout_formula"):
@@ -239,6 +238,10 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
         return _decision(opportunity, decision="REVALIDATE", reasons=["VOLATILE_FIELDS_STALE_OR_UNKNOWN"], now=now_dt,
                          requires_revalidation=True, revalidation_fields=stale_fields)
 
+    economic_unknown = [name for name in ("estimated_success_probability", "probability_collection", "expected_collectible_revenue", "expected_net_profit", "expected_profit_per_laptop_hour") if opportunity.get(name) is None]
+    if economic_unknown:
+        return _decision(opportunity, decision="REVALIDATE", reasons=["ECONOMIC_INPUTS_UNKNOWN"], now=now_dt,
+                         requires_revalidation=True, revalidation_fields=economic_unknown)
     if _num(opportunity.get("expected_collectible_revenue")) <= 0:
         return _decision(opportunity, decision="REJECT", reasons=["COLLECTIBLE_REVENUE_UNSUPPORTED"], now=now_dt)
     if _num(opportunity.get("expected_net_profit")) <= 0:

@@ -142,13 +142,18 @@ class OpportunityLedger:
         with self._connect() as db:
             rows = db.execute(
                 """
-                WITH latest AS (
-                    SELECT opportunity_id, MAX(id) AS decision_id
-                    FROM opportunity_decisions GROUP BY opportunity_id
+                WITH ranked AS (
+                    SELECT id, opportunity_id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY opportunity_id
+                               ORDER BY evaluated_at DESC, id DESC
+                           ) AS recency_rank
+                    FROM opportunity_decisions
                 )
                 SELECT d.decision_json
-                FROM latest l JOIN opportunity_decisions d ON d.id = l.decision_id
-                WHERE d.decision = 'ACCEPT' AND d.eligible_for_queue = 1
+                FROM ranked r JOIN opportunity_decisions d ON d.id = r.id
+                WHERE r.recency_rank = 1
+                  AND d.decision = 'ACCEPT' AND d.eligible_for_queue = 1
                 ORDER BY d.priority_score DESC, d.id ASC
                 LIMIT ?
                 """,

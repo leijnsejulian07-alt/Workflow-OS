@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from datetime import datetime, timezone
 from typing import Any
 
@@ -34,6 +35,8 @@ def _number(value: Any, field: str, *, minimum: float | None = None, maximum: fl
         number = float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{field} must be numeric") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"{field} must be finite")
     if minimum is not None and number < minimum:
         raise ValueError(f"{field} must be >= {minimum}")
     if maximum is not None and number > maximum:

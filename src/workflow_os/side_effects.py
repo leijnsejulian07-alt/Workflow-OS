@@ -70,6 +70,9 @@ class SideEffectLedger:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_side_effect_external_reference
+                ON side_effects(action, target, external_reference)
+                WHERE external_reference IS NOT NULL;
                 """
             )
 
@@ -138,19 +141,35 @@ class SideEffectLedger:
             return self._row(self._require(db, idempotency_key))
 
     def mark_succeeded(self, idempotency_key: str, *, external_reference: str | None = None) -> SideEffectRecord:
+        reference = external_reference.strip() if isinstance(external_reference, str) else external_reference
+        if reference == "":
+            reference = None
+        if reference is not None and len(reference) > 500:
+            raise ValueError("external_reference must be at most 500 characters")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = self._require(db, idempotency_key)
             if row["state"] == "SUCCEEDED":
-                if external_reference and row["external_reference"] not in {None, external_reference}:
+                if reference and row["external_reference"] not in {None, reference}:
                     raise ValueError("conflicting external reference for completed side effect")
                 return self._row(row)
             if row["state"] not in {"EXECUTING", "UNKNOWN"}:
                 raise RuntimeError("success can only follow execution or reconciliation of UNKNOWN")
-            db.execute(
-                "UPDATE side_effects SET state='SUCCEEDED', external_reference=?, updated_at=CURRENT_TIMESTAMP WHERE idempotency_key=?",
-                (external_reference, idempotency_key),
-            )
+            if reference is not None:
+                duplicate = db.execute(
+                    """SELECT idempotency_key FROM side_effects
+                       WHERE action=? AND target=? AND external_reference=? AND idempotency_key<>?""",
+                    (row["action"], row["target"], reference, idempotency_key),
+                ).fetchone()
+                if duplicate:
+                    raise ValueError("external reference is already bound to another side effect")
+            try:
+                db.execute(
+                    "UPDATE side_effects SET state='SUCCEEDED', external_reference=?, updated_at=CURRENT_TIMESTAMP WHERE idempotency_key=?",
+                    (reference, idempotency_key),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("external reference is already bound to another side effect") from exc
             return self._row(self._require(db, idempotency_key))
 
     def mark_failed(self, idempotency_key: str, *, definitely_not_applied: bool) -> SideEffectRecord:

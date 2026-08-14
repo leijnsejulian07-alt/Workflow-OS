@@ -35,6 +35,7 @@ def valid_payload() -> dict:
         "capital_required": 0,
         "source_checked_at": "2026-08-14T12:00:00+00:00",
         "freshness_ttl_seconds": 86400,
+        "deadline": "2026-08-31T23:59:59+00:00",
         "remaining_budget": 1000,
         "payout_formula": "EUR 100 per approved unit",
     }
@@ -58,6 +59,8 @@ class IngestServiceTests(unittest.TestCase):
         first = self.service.ingest("adapter:test:1", payload)
         second = self.service.ingest("adapter:test:1", payload)
         self.assertEqual(first, second)
+        self.assertEqual(first["decision"], "ACCEPT")
+        self.assertTrue(first["eligible_for_queue"])
         self.assertEqual(len(self.service.opportunities.queue_candidates()), 1)
         self.assertTrue(self.service.audit.verify_audit_chain())
 
@@ -130,7 +133,8 @@ class HttpBoundaryTests(unittest.TestCase):
         }
         status, data = self.request("POST", "/v1/opportunities", body, headers)
         self.assertEqual(status, 200)
-        self.assertIn(data["decision"], {"ACCEPT", "REVALIDATE", "PAUSE", "REJECT"})
+        self.assertEqual(data["decision"], "ACCEPT")
+        self.assertTrue(data["eligible_for_queue"])
         self.assertIn("opportunity_id", data)
 
     def test_wrong_content_type_rejected(self):

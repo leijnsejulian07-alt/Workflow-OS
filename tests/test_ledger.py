@@ -74,6 +74,21 @@ class OpportunityLedgerTests(unittest.TestCase):
         self.assertEqual(revalidated.decision, "REVALIDATE")
         self.assertEqual(self.ledger.queue_candidates(), [])
 
+    def test_backfilled_older_decision_cannot_replace_latest_queue_state(self):
+        op = normalize(self.raw(), now=NOW)
+        stale = dict(op)
+        stale["source_checked_at"] = (NOW - timedelta(hours=3)).isoformat()
+        newer = evaluate(stale, now=NOW + timedelta(minutes=10))
+        older = evaluate(op, now=NOW)
+        self.assertEqual(newer.decision, "REVALIDATE")
+        self.assertEqual(older.decision, "ACCEPT")
+
+        self.ledger.record(stale, newer)
+        self.ledger.record(op, older)
+
+        self.assertEqual(self.ledger.latest_decision(op["opportunity_id"])["decision"], "REVALIDATE")
+        self.assertEqual(self.ledger.queue_candidates(), [])
+
     def test_queue_orders_by_priority(self):
         low = normalize(self.raw("low", 50), now=NOW)
         high = normalize(self.raw("high", 300), now=NOW)

@@ -76,15 +76,7 @@ class SideEffectLedger:
                 """
             )
 
-    def reserve(
-        self,
-        *,
-        idempotency_key: str,
-        action: str,
-        target: str,
-        payload: Any,
-        max_attempts: int = 3,
-    ) -> SideEffectRecord:
+    def reserve(self, *, idempotency_key: str, action: str, target: str, payload: Any, max_attempts: int = 3) -> SideEffectRecord:
         key = idempotency_key.strip()
         action = action.strip()
         target = target.strip()
@@ -96,31 +88,17 @@ class SideEffectLedger:
             raise ValueError("target must be 1..500 characters")
         if not 1 <= max_attempts <= 10:
             raise ValueError("max_attempts must be between 1 and 10")
-
         request_json = _canonical_json(payload)
         fingerprint = _fingerprint(action, target, request_json)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
-                "SELECT * FROM side_effects WHERE idempotency_key = ?", (key,)
-            ).fetchone()
+            row = db.execute("SELECT * FROM side_effects WHERE idempotency_key = ?", (key,)).fetchone()
             if row:
                 if row["request_fingerprint"] != fingerprint:
                     raise ValueError("idempotency key is already bound to a different side effect")
                 return self._row(row)
-            db.execute(
-                """
-                INSERT INTO side_effects(
-                    idempotency_key, action, target, request_json,
-                    request_fingerprint, state, max_attempts
-                ) VALUES(?, ?, ?, ?, ?, 'RESERVED', ?)
-                """,
-                (key, action, target, request_json, fingerprint, max_attempts),
-            )
-            row = db.execute(
-                "SELECT * FROM side_effects WHERE idempotency_key = ?", (key,)
-            ).fetchone()
-            return self._row(row)
+            db.execute("""INSERT INTO side_effects(idempotency_key, action, target, request_json, request_fingerprint, state, max_attempts) VALUES(?, ?, ?, ?, ?, 'RESERVED', ?)""", (key, action, target, request_json, fingerprint, max_attempts))
+            return self._row(db.execute("SELECT * FROM side_effects WHERE idempotency_key = ?", (key,)).fetchone())
 
     def begin_attempt(self, idempotency_key: str) -> SideEffectRecord:
         with self._connect() as db:
@@ -130,14 +108,7 @@ class SideEffectLedger:
                 raise RuntimeError(f"side effect is not retry-authorized from state {row['state']}")
             if row["attempt_count"] >= row["max_attempts"]:
                 raise RuntimeError("side effect retry budget exhausted")
-            db.execute(
-                """
-                UPDATE side_effects
-                SET state='EXECUTING', attempt_count=attempt_count+1, updated_at=CURRENT_TIMESTAMP
-                WHERE idempotency_key=?
-                """,
-                (idempotency_key,),
-            )
+            db.execute("UPDATE side_effects SET state='EXECUTING', attempt_count=attempt_count+1, updated_at=CURRENT_TIMESTAMP WHERE idempotency_key=?", (idempotency_key,))
             return self._row(self._require(db, idempotency_key))
 
     def mark_succeeded(self, idempotency_key: str, *, external_reference: str | None = None) -> SideEffectRecord:
@@ -150,24 +121,17 @@ class SideEffectLedger:
             db.execute("BEGIN IMMEDIATE")
             row = self._require(db, idempotency_key)
             if row["state"] == "SUCCEEDED":
-                if reference and row["external_reference"] not in {None, reference}:
-                    raise ValueError("conflicting external reference for completed side effect")
+                if row["external_reference"] != reference:
+                    raise ValueError("completed side-effect external reference is immutable")
                 return self._row(row)
             if row["state"] not in {"EXECUTING", "UNKNOWN"}:
                 raise RuntimeError("success can only follow execution or reconciliation of UNKNOWN")
             if reference is not None:
-                duplicate = db.execute(
-                    """SELECT idempotency_key FROM side_effects
-                       WHERE action=? AND target=? AND external_reference=? AND idempotency_key<>?""",
-                    (row["action"], row["target"], reference, idempotency_key),
-                ).fetchone()
+                duplicate = db.execute("""SELECT idempotency_key FROM side_effects WHERE action=? AND target=? AND external_reference=? AND idempotency_key<>?""", (row["action"], row["target"], reference, idempotency_key)).fetchone()
                 if duplicate:
                     raise ValueError("external reference is already bound to another side effect")
             try:
-                db.execute(
-                    "UPDATE side_effects SET state='SUCCEEDED', external_reference=?, updated_at=CURRENT_TIMESTAMP WHERE idempotency_key=?",
-                    (reference, idempotency_key),
-                )
+                db.execute("UPDATE side_effects SET state='SUCCEEDED', external_reference=?, updated_at=CURRENT_TIMESTAMP WHERE idempotency_key=?", (reference, idempotency_key))
             except sqlite3.IntegrityError as exc:
                 raise ValueError("external reference is already bound to another side effect") from exc
             return self._row(self._require(db, idempotency_key))
@@ -179,23 +143,16 @@ class SideEffectLedger:
             if row["state"] != "EXECUTING":
                 raise RuntimeError("failure can only follow EXECUTING")
             state = "FAILED_RETRYABLE" if definitely_not_applied else "UNKNOWN"
-            db.execute(
-                "UPDATE side_effects SET state=?, updated_at=CURRENT_TIMESTAMP WHERE idempotency_key=?",
-                (state, idempotency_key),
-            )
+            db.execute("UPDATE side_effects SET state=?, updated_at=CURRENT_TIMESTAMP WHERE idempotency_key=?", (state, idempotency_key))
             return self._row(self._require(db, idempotency_key))
 
     def reconcile_not_applied(self, idempotency_key: str) -> SideEffectRecord:
-        """Authorize a retry only after external reconciliation proves no effect occurred."""
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = self._require(db, idempotency_key)
             if row["state"] != "UNKNOWN":
                 raise RuntimeError("only UNKNOWN side effects require not-applied reconciliation")
-            db.execute(
-                "UPDATE side_effects SET state='FAILED_RETRYABLE', updated_at=CURRENT_TIMESTAMP WHERE idempotency_key=?",
-                (idempotency_key,),
-            )
+            db.execute("UPDATE side_effects SET state='FAILED_RETRYABLE', updated_at=CURRENT_TIMESTAMP WHERE idempotency_key=?", (idempotency_key,))
             return self._row(self._require(db, idempotency_key))
 
     def get(self, idempotency_key: str) -> SideEffectRecord | None:
@@ -215,13 +172,4 @@ class SideEffectLedger:
         state = str(row["state"])
         if state not in _ALLOWED_STATES:
             raise RuntimeError("invalid persisted side-effect state")
-        return SideEffectRecord(
-            idempotency_key=str(row["idempotency_key"]),
-            action=str(row["action"]),
-            target=str(row["target"]),
-            request_fingerprint=str(row["request_fingerprint"]),
-            state=state,
-            attempt_count=int(row["attempt_count"]),
-            max_attempts=int(row["max_attempts"]),
-            external_reference=row["external_reference"],
-        )
+        return SideEffectRecord(idempotency_key=str(row["idempotency_key"]), action=str(row["action"]), target=str(row["target"]), request_fingerprint=str(row["request_fingerprint"]), state=state, attempt_count=int(row["attempt_count"]), max_attempts=int(row["max_attempts"]), external_reference=row["external_reference"])

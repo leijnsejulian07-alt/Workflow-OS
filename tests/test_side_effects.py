@@ -61,6 +61,16 @@ class SideEffectLedgerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ledger.mark_succeeded("pay:1", external_reference="ext-other")
 
+    def test_terminal_success_cannot_gain_reference_later(self):
+        ledger = self.make_ledger()
+        ledger.reserve(idempotency_key="deploy:no-ref", action="deploy", target="hosting:site", payload={"version": 1})
+        ledger.begin_attempt("deploy:no-ref")
+        success = ledger.mark_succeeded("deploy:no-ref")
+        self.assertIsNone(success.external_reference)
+        with self.assertRaises(ValueError):
+            ledger.mark_succeeded("deploy:no-ref", external_reference="late-reference")
+        self.assertIsNone(ledger.get("deploy:no-ref").external_reference)
+
     def test_unknown_can_reconcile_to_success_without_retry(self):
         ledger = self.make_ledger()
         ledger.reserve(idempotency_key="deploy:2", action="deploy", target="hosting:site", payload={"version": 2})

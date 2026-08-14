@@ -85,6 +85,20 @@ class WebsiteInboundAdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             to_opportunity(lead)
 
+    def test_non_finite_economics_are_rejected(self):
+        for field, value in (
+            ("price_eur", "NaN"),
+            ("expected_production_cost_eur", "Infinity"),
+            ("expected_laptop_minutes", "-Infinity"),
+            ("probability_collection", float("nan")),
+            ("customer_budget_eur", float("inf")),
+        ):
+            with self.subTest(field=field, value=value):
+                lead = valid_lead()
+                lead[field] = value
+                with self.assertRaises(ValueError):
+                    to_opportunity(lead)
+
     def test_same_lead_identity_is_deterministic(self):
         first = to_opportunity(valid_lead())
         second = to_opportunity(valid_lead())

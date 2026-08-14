@@ -62,8 +62,10 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
     now_iso = now_dt.isoformat()
     success_raw = _known_num(raw.get("estimated_success_probability"))
     collection_raw = _known_num(raw.get("probability_collection"))
+    owner_minutes_raw = _known_num(raw.get("expected_owner_minutes"))
     success = min(1.0, max(0.0, success_raw)) if success_raw is not None else None
     collection = min(1.0, max(0.0, collection_raw)) if collection_raw is not None else None
+    owner_minutes = max(0.0, owner_minutes_raw) if owner_minutes_raw is not None else None
     gross = max(0.0, _num(raw.get("expected_revenue"), 0.0))
     collectible = raw.get("expected_collectible_revenue")
     if collectible is None and success is not None and collection is not None:
@@ -94,7 +96,7 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
         "expected_collectible_revenue": collectible_num,
         "expected_net_profit": net,
         "expected_laptop_minutes": minutes,
-        "expected_owner_minutes": max(0.0, _num(raw.get("expected_owner_minutes"), 0.0)),
+        "expected_owner_minutes": owner_minutes,
         "expected_profit_per_laptop_hour": per_hour,
         "compliance_risk": str(raw.get("compliance_risk") or "MEDIUM").upper(),
         "platform_risk": str(raw.get("platform_risk") or "MEDIUM").upper(),
@@ -217,7 +219,15 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
         return _decision(opportunity, decision="REJECT", reasons=["USAGE_RIGHTS_UNCLEAR"], now=now_dt)
     if opportunity.get("compliance_risk") == "BLOCKED" or opportunity.get("platform_risk") == "BLOCKED":
         return _decision(opportunity, decision="REJECT", reasons=["RISK_BLOCKED"], now=now_dt)
-    if _num(opportunity.get("expected_owner_minutes")) > 0:
+
+    owner_minutes = _known_num(opportunity.get("expected_owner_minutes"))
+    if owner_minutes is None:
+        return _decision(opportunity, decision="REVALIDATE", reasons=["OWNER_WORKLOAD_UNKNOWN"], now=now_dt,
+                         requires_revalidation=True, revalidation_fields=["expected_owner_minutes"])
+    if owner_minutes < 0:
+        return _decision(opportunity, decision="REVALIDATE", reasons=["OWNER_WORKLOAD_INVALID"], now=now_dt,
+                         requires_revalidation=True, revalidation_fields=["expected_owner_minutes"])
+    if owner_minutes > 0:
         return _decision(opportunity, decision="REJECT", reasons=["RECURRING_OWNER_WORK_REQUIRED"], now=now_dt)
 
     attention = str(opportunity.get("user_attention_requirement") or "NONE")

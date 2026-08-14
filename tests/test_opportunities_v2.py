@@ -88,6 +88,31 @@ class OpportunityDecisionV2Tests(unittest.TestCase):
         self.assertEqual(decision.decision, "PAUSE")
         self.assertFalse(decision.eligible_for_queue)
 
+    def test_missing_owner_workload_revalidates(self):
+        raw = self.base()
+        raw.pop("expected_owner_minutes")
+        op = normalize(raw, now=NOW)
+        self.assertIsNone(op["expected_owner_minutes"])
+        decision = evaluate(op, now=NOW)
+        self.assertEqual(decision.decision, "REVALIDATE")
+        self.assertEqual(decision.decision_reasons, ("OWNER_WORKLOAD_UNKNOWN",))
+        self.assertIn("expected_owner_minutes", decision.revalidation_fields)
+        self.assertFalse(decision.eligible_for_queue)
+
+    def test_invalid_owner_workload_revalidates(self):
+        raw = self.base()
+        raw["expected_owner_minutes"] = "unknown"
+        decision = evaluate(normalize(raw, now=NOW), now=NOW)
+        self.assertEqual(decision.decision, "REVALIDATE")
+        self.assertIn("expected_owner_minutes", decision.revalidation_fields)
+
+    def test_explicit_zero_owner_workload_can_accept(self):
+        raw = self.base()
+        raw["expected_owner_minutes"] = 0
+        decision = evaluate(normalize(raw, now=NOW), now=NOW)
+        self.assertEqual(decision.decision, "ACCEPT")
+        self.assertTrue(decision.eligible_for_queue)
+
     def test_recurring_owner_work_is_rejected(self):
         raw = self.base()
         raw["expected_owner_minutes"] = 1

@@ -25,6 +25,7 @@ def valid_lead() -> dict:
         "automation_completeness": 1,
         "capital_required_eur": 0,
         "content_rights_grant": "Customer grants rights to use submitted text and images for preview and delivered website.",
+        "content_rights_attested": True,
         "customer_controls_domain": True,
         "source_checked_at": "2026-08-15T00:00:00+02:00",
         "quote_expires_at": "2026-08-20T23:59:59+02:00",
@@ -37,6 +38,8 @@ def valid_lead() -> dict:
 class WebsiteInboundAdapterTests(unittest.TestCase):
     def test_valid_opt_in_lead_reaches_accept(self):
         raw = to_opportunity(valid_lead())
+        self.assertEqual(raw["rights_verification_state"], "VERIFIED")
+        self.assertIs(raw["lead_evidence"]["content_rights_attested"], True)
         normalized = normalize(raw, now=datetime(2026, 8, 14, 22, 5, tzinfo=timezone.utc))
         decision = evaluate(normalized, now=datetime(2026, 8, 14, 22, 5, tzinfo=timezone.utc))
         self.assertEqual(decision.decision, "ACCEPT")
@@ -44,65 +47,56 @@ class WebsiteInboundAdapterTests(unittest.TestCase):
         self.assertEqual(normalized["expected_owner_minutes"], 0)
 
     def test_unsolicited_channel_is_rejected(self):
-        lead = valid_lead()
-        lead["acquisition_channel"] = "cold_email"
-        with self.assertRaises(ValueError):
-            to_opportunity(lead)
+        lead = valid_lead(); lead["acquisition_channel"] = "cold_email"
+        with self.assertRaises(ValueError): to_opportunity(lead)
 
     def test_missing_commercial_contact_consent_is_rejected(self):
-        lead = valid_lead()
-        lead["commercial_contact_consent"] = False
-        with self.assertRaises(ValueError):
-            to_opportunity(lead)
+        lead = valid_lead(); lead["commercial_contact_consent"] = False
+        with self.assertRaises(ValueError): to_opportunity(lead)
 
     def test_recurring_maintenance_is_rejected(self):
-        lead = valid_lead()
-        lead["recurring_maintenance_requested"] = True
-        with self.assertRaises(ValueError):
-            to_opportunity(lead)
+        lead = valid_lead(); lead["recurring_maintenance_requested"] = True
+        with self.assertRaises(ValueError): to_opportunity(lead)
 
     def test_customer_must_control_domain(self):
-        lead = valid_lead()
-        lead["customer_controls_domain"] = False
-        with self.assertRaises(ValueError):
-            to_opportunity(lead)
+        lead = valid_lead(); lead["customer_controls_domain"] = False
+        with self.assertRaises(ValueError): to_opportunity(lead)
 
     def test_scope_is_bounded_to_five_pages(self):
-        lead = valid_lead()
-        lead["page_count"] = 6
-        with self.assertRaises(ValueError):
-            to_opportunity(lead)
+        lead = valid_lead(); lead["page_count"] = 6
+        with self.assertRaises(ValueError): to_opportunity(lead)
 
     def test_rights_grant_is_required(self):
-        lead = valid_lead()
-        lead["content_rights_grant"] = ""
-        with self.assertRaises(ValueError):
-            to_opportunity(lead)
+        lead = valid_lead(); lead["content_rights_grant"] = ""
+        with self.assertRaises(ValueError): to_opportunity(lead)
 
-    def test_fractional_page_count_is_rejected(self):
-        lead = valid_lead()
-        lead["page_count"] = 2.5
-        with self.assertRaises(ValueError):
-            to_opportunity(lead)
-
-    def test_non_finite_economics_are_rejected(self):
-        for field, value in (
-            ("price_eur", "NaN"),
-            ("expected_production_cost_eur", "Infinity"),
-            ("expected_laptop_minutes", "-Infinity"),
-            ("probability_collection", float("nan")),
-            ("customer_budget_eur", float("inf")),
-        ):
-            with self.subTest(field=field, value=value):
+    def test_rights_attestation_is_strict_boolean_true(self):
+        for value in (None, False, "true", 1):
+            with self.subTest(value=value):
                 lead = valid_lead()
-                lead[field] = value
+                if value is None:
+                    lead.pop("content_rights_attested")
+                else:
+                    lead["content_rights_attested"] = value
                 with self.assertRaises(ValueError):
                     to_opportunity(lead)
 
+    def test_grant_text_alone_never_verifies_rights(self):
+        lead = valid_lead(); lead.pop("content_rights_attested")
+        with self.assertRaises(ValueError): to_opportunity(lead)
+
+    def test_fractional_page_count_is_rejected(self):
+        lead = valid_lead(); lead["page_count"] = 2.5
+        with self.assertRaises(ValueError): to_opportunity(lead)
+
+    def test_non_finite_economics_are_rejected(self):
+        for field, value in (("price_eur", "NaN"), ("expected_production_cost_eur", "Infinity"), ("expected_laptop_minutes", "-Infinity"), ("probability_collection", float("nan")), ("customer_budget_eur", float("inf"))):
+            with self.subTest(field=field, value=value):
+                lead = valid_lead(); lead[field] = value
+                with self.assertRaises(ValueError): to_opportunity(lead)
+
     def test_same_lead_identity_is_deterministic(self):
-        first = to_opportunity(valid_lead())
-        second = to_opportunity(valid_lead())
-        self.assertEqual(first["opportunity_id"], second["opportunity_id"])
+        self.assertEqual(to_opportunity(valid_lead())["opportunity_id"], to_opportunity(valid_lead())["opportunity_id"])
 
 
 if __name__ == "__main__":

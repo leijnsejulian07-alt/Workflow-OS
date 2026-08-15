@@ -241,12 +241,20 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
     ttl = max(0, int(_num(opportunity.get("freshness_ttl_seconds"), 0)))
     if checked is None or checked > now_dt or ttl <= 0 or checked + timedelta(seconds=ttl) <= now_dt:
         stale_fields.append("source_checked_at")
-    for field in ("deadline", "remaining_budget", "payout_formula"):
+    for field in ("remaining_budget", "payout_formula"):
         if opportunity.get(field) in (None, "", []):
             stale_fields.append(field)
+    deadline_raw = opportunity.get("deadline")
+    deadline = _parse_dt(deadline_raw)
+    if deadline_raw in (None, "", []):
+        stale_fields.append("deadline")
+    elif deadline is None:
+        stale_fields.append("deadline")
     if stale_fields:
         return _decision(opportunity, decision="REVALIDATE", reasons=["VOLATILE_FIELDS_STALE_OR_UNKNOWN"], now=now_dt,
                          requires_revalidation=True, revalidation_fields=stale_fields)
+    if deadline <= now_dt:
+        return _decision(opportunity, decision="REJECT", reasons=["DEADLINE_EXPIRED"], now=now_dt)
 
     economic_unknown = [name for name in ("estimated_success_probability", "probability_collection", "expected_collectible_revenue", "expected_net_profit", "expected_profit_per_laptop_hour") if opportunity.get(name) is None]
     if economic_unknown:

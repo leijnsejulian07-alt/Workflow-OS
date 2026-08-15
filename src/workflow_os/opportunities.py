@@ -239,7 +239,7 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
     stale_fields: list[str] = []
     checked = _parse_dt(opportunity.get("source_checked_at"))
     ttl = max(0, int(_num(opportunity.get("freshness_ttl_seconds"), 0)))
-    if checked is None or ttl <= 0 or checked + timedelta(seconds=ttl) <= now_dt:
+    if checked is None or checked > now_dt or ttl <= 0 or checked + timedelta(seconds=ttl) <= now_dt:
         stale_fields.append("source_checked_at")
     for field in ("deadline", "remaining_budget", "payout_formula"):
         if opportunity.get(field) in (None, "", []):

@@ -40,6 +40,7 @@ class WebsiteInboundAdapterTests(unittest.TestCase):
         raw = to_opportunity(valid_lead())
         self.assertEqual(raw["rights_verification_state"], "VERIFIED")
         self.assertIs(raw["lead_evidence"]["content_rights_attested"], True)
+        self.assertIs(raw["lead_evidence"]["recurring_maintenance_requested"], False)
         normalized = normalize(raw, now=datetime(2026, 8, 14, 22, 5, tzinfo=timezone.utc))
         decision = evaluate(normalized, now=datetime(2026, 8, 14, 22, 5, tzinfo=timezone.utc))
         self.assertEqual(decision.decision, "ACCEPT")
@@ -54,9 +55,16 @@ class WebsiteInboundAdapterTests(unittest.TestCase):
         lead = valid_lead(); lead["commercial_contact_consent"] = False
         with self.assertRaises(ValueError): to_opportunity(lead)
 
-    def test_recurring_maintenance_is_rejected(self):
-        lead = valid_lead(); lead["recurring_maintenance_requested"] = True
-        with self.assertRaises(ValueError): to_opportunity(lead)
+    def test_recurring_maintenance_must_be_explicit_boolean_false(self):
+        for value in (None, True, "false", 0):
+            with self.subTest(value=value):
+                lead = valid_lead()
+                if value is None:
+                    lead.pop("recurring_maintenance_requested")
+                else:
+                    lead["recurring_maintenance_requested"] = value
+                with self.assertRaises(ValueError):
+                    to_opportunity(lead)
 
     def test_customer_must_control_domain(self):
         lead = valid_lead(); lead["customer_controls_domain"] = False

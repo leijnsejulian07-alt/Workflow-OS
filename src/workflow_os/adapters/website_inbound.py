@@ -56,12 +56,7 @@ def _iso(value: Any, field: str) -> str:
 
 
 def to_opportunity(lead: dict[str, Any]) -> dict[str, Any]:
-    """Normalize an explicitly opt-in Website-in-a-Box lead into Opportunity Manager input.
-
-    This adapter deliberately does not discover or contact prospects. It only accepts leads
-    that already arrived through an allowed inbound/opt-in acquisition channel and that grant
-    sufficient rights to use the submitted customer content for preview/site production.
-    """
+    """Normalize an explicitly opt-in Website-in-a-Box lead into Opportunity Manager input."""
     if not isinstance(lead, dict):
         raise ValueError("lead must be an object")
 
@@ -75,8 +70,9 @@ def to_opportunity(lead: dict[str, Any]) -> dict[str, Any]:
     if lead.get("recurring_maintenance_requested") is True:
         raise ValueError("recurring maintenance is outside the zero-touch product scope")
 
-    pages = int(_number(lead.get("page_count"), "page_count", minimum=1, maximum=MAX_PAGES))
-    if float(pages) != _number(lead.get("page_count"), "page_count", minimum=1, maximum=MAX_PAGES):
+    pages_number = _number(lead.get("page_count"), "page_count", minimum=1, maximum=MAX_PAGES)
+    pages = int(pages_number)
+    if float(pages) != pages_number:
         raise ValueError("page_count must be a whole number")
 
     price = _number(lead.get("price_eur"), "price_eur", minimum=MIN_PRICE_EUR)
@@ -89,6 +85,8 @@ def to_opportunity(lead: dict[str, Any]) -> dict[str, Any]:
     capital_required = _number(lead.get("capital_required_eur"), "capital_required_eur", minimum=0)
 
     rights_grant = _text(lead.get("content_rights_grant"), "content_rights_grant")
+    if lead.get("content_rights_attested") is not True:
+        raise ValueError("content_rights_attested must be true")
     if lead.get("customer_controls_domain") is not True:
         raise ValueError("customer_controls_domain must be true")
 
@@ -147,5 +145,7 @@ def to_opportunity(lead: dict[str, Any]) -> dict[str, Any]:
             "acquisition_channel": channel,
             "explicit_request_for_website": True,
             "commercial_contact_consent": True,
+            "content_rights_attested": True,
+            "content_rights_grant": rights_grant,
         },
     }

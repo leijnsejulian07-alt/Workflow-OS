@@ -5,6 +5,7 @@ import json
 import tempfile
 import threading
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from workflow_os.ingest import LocalIngestService, MAX_REQUEST_BYTES, make_server
@@ -33,7 +34,7 @@ def valid_payload() -> dict:
         "expected_time_to_cash_hours": 48,
         "automation_completeness": 1,
         "capital_required": 0,
-        "source_checked_at": "2026-08-14T12:00:00+00:00",
+        "source_checked_at": datetime.now(timezone.utc).isoformat(),
         "freshness_ttl_seconds": 86400,
         "deadline": "2026-08-31T23:59:59+00:00",
         "remaining_budget": 1000,

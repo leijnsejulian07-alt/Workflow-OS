@@ -67,8 +67,8 @@ def to_opportunity(lead: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("explicit_request_for_website must be true")
     if lead.get("commercial_contact_consent") is not True:
         raise ValueError("commercial_contact_consent must be true")
-    if lead.get("recurring_maintenance_requested") is True:
-        raise ValueError("recurring maintenance is outside the zero-touch product scope")
+    if lead.get("recurring_maintenance_requested") is not False:
+        raise ValueError("recurring_maintenance_requested must be explicitly false")
 
     pages_number = _number(lead.get("page_count"), "page_count", minimum=1, maximum=MAX_PAGES)
     pages = int(pages_number)
@@ -145,6 +145,7 @@ def to_opportunity(lead: dict[str, Any]) -> dict[str, Any]:
             "acquisition_channel": channel,
             "explicit_request_for_website": True,
             "commercial_contact_consent": True,
+            "recurring_maintenance_requested": False,
             "content_rights_attested": True,
             "content_rights_grant": rights_grant,
         },

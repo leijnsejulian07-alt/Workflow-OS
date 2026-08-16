@@ -11,6 +11,7 @@ SCORING_VERSION = "priority-scoring/1"
 BLOCKED_CATEGORIES = {"fake_engagement", "unsafe_financial_claims", "unsafe_medical_claims", "spam"}
 ALLOWED_OWNER_ATTENTION = {"NONE", "OWNER_APPROVAL", "KYC", "EXCEPTION", "EMERGENCY"}
 PAUSE_OWNER_ATTENTION = {"OWNER_APPROVAL", "KYC", "EXCEPTION", "EMERGENCY"}
+ALLOWED_RISK_LEVELS = {"LOW", "MEDIUM", "HIGH", "BLOCKED"}
 
 
 def utcnow_dt() -> datetime:
@@ -59,6 +60,13 @@ def _known_nonnegative_int(value: Any) -> int | None:
     if n is None or n < 0 or not n.is_integer():
         return None
     return int(n)
+
+
+def _known_risk(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    risk = value.strip().upper()
+    return risk if risk in ALLOWED_RISK_LEVELS else None
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -118,8 +126,8 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
         "expected_laptop_minutes": minutes,
         "expected_owner_minutes": owner_minutes,
         "expected_profit_per_laptop_hour": per_hour,
-        "compliance_risk": str(raw.get("compliance_risk") or "MEDIUM").upper(),
-        "platform_risk": str(raw.get("platform_risk") or "MEDIUM").upper(),
+        "compliance_risk": _known_risk(raw.get("compliance_risk")),
+        "platform_risk": _known_risk(raw.get("platform_risk")),
         "duplicate_conflict_status": str(raw.get("duplicate_conflict_status") or "UNKNOWN").upper(),
         "user_attention_requirement": str(raw.get("user_attention_requirement") or "NONE").upper(),
         "rights_verification_state": str(raw.get("rights_verification_state") or "UNKNOWN").upper(),
@@ -163,7 +171,10 @@ class OpportunityDecision:
 def _risk_penalty(op: dict[str, Any]) -> float:
     penalty = 0.0
     for field in ("compliance_risk", "platform_risk"):
-        penalty += {"LOW": 0.0, "MEDIUM": 0.5, "HIGH": 1.0, "BLOCKED": 2.0}.get(str(op.get(field, "MEDIUM")), 1.0)
+        risk = _known_risk(op.get(field))
+        if risk is None:
+            return 4.0
+        penalty += {"LOW": 0.0, "MEDIUM": 0.5, "HIGH": 1.0, "BLOCKED": 2.0}[risk]
     return penalty
 
 
@@ -237,6 +248,11 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
         return _decision(opportunity, decision="REJECT", reasons=["RIGHTS_NOT_VERIFIED"], now=now_dt)
     if not str(opportunity.get("usage_rights") or "").strip():
         return _decision(opportunity, decision="REJECT", reasons=["USAGE_RIGHTS_UNCLEAR"], now=now_dt)
+
+    risk_unknown = [field for field in ("compliance_risk", "platform_risk") if _known_risk(opportunity.get(field)) is None]
+    if risk_unknown:
+        return _decision(opportunity, decision="REVALIDATE", reasons=["RISK_EVIDENCE_UNKNOWN_OR_INVALID"], now=now_dt,
+                         requires_revalidation=True, revalidation_fields=risk_unknown)
     if opportunity.get("compliance_risk") == "BLOCKED" or opportunity.get("platform_risk") == "BLOCKED":
         return _decision(opportunity, decision="REJECT", reasons=["RISK_BLOCKED"], now=now_dt)
 

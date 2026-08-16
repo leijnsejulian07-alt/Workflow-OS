@@ -44,6 +44,11 @@ def _known_num(value: Any) -> float | None:
         return None
 
 
+def _known_probability(value: Any) -> float | None:
+    n = _known_num(value)
+    return n if n is not None and 0.0 <= n <= 1.0 else None
+
+
 def _parse_dt(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -60,11 +65,9 @@ def _parse_dt(value: Any) -> datetime | None:
 def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
     now_dt = now or utcnow_dt()
     now_iso = now_dt.isoformat()
-    success_raw = _known_num(raw.get("estimated_success_probability"))
-    collection_raw = _known_num(raw.get("probability_collection"))
+    success = _known_probability(raw.get("estimated_success_probability"))
+    collection = _known_probability(raw.get("probability_collection"))
     owner_minutes_raw = _known_num(raw.get("expected_owner_minutes"))
-    success = min(1.0, max(0.0, success_raw)) if success_raw is not None else None
-    collection = min(1.0, max(0.0, collection_raw)) if collection_raw is not None else None
     owner_minutes = max(0.0, owner_minutes_raw) if owner_minutes_raw is not None else None
     gross = max(0.0, _num(raw.get("expected_revenue"), 0.0))
     collectible = raw.get("expected_collectible_revenue")

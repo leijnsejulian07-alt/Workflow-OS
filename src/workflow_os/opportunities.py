@@ -12,6 +12,7 @@ BLOCKED_CATEGORIES = {"fake_engagement", "unsafe_financial_claims", "unsafe_medi
 ALLOWED_OWNER_ATTENTION = {"NONE", "OWNER_APPROVAL", "KYC", "EXCEPTION", "EMERGENCY"}
 PAUSE_OWNER_ATTENTION = {"OWNER_APPROVAL", "KYC", "EXCEPTION", "EMERGENCY"}
 ALLOWED_RISK_LEVELS = {"LOW", "MEDIUM", "HIGH", "BLOCKED"}
+ALLOWED_DUPLICATE_CONFLICT_STATES = {"CLEAR", "DUPLICATE", "CONFLICT"}
 
 
 def utcnow_dt() -> datetime:
@@ -67,6 +68,13 @@ def _known_risk(value: Any) -> str | None:
         return None
     risk = value.strip().upper()
     return risk if risk in ALLOWED_RISK_LEVELS else None
+
+
+def _known_duplicate_conflict_status(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    status = value.strip().upper()
+    return status if status in ALLOWED_DUPLICATE_CONFLICT_STATES else None
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -128,7 +136,7 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
         "expected_profit_per_laptop_hour": per_hour,
         "compliance_risk": _known_risk(raw.get("compliance_risk")),
         "platform_risk": _known_risk(raw.get("platform_risk")),
-        "duplicate_conflict_status": str(raw.get("duplicate_conflict_status") or "UNKNOWN").upper(),
+        "duplicate_conflict_status": _known_duplicate_conflict_status(raw.get("duplicate_conflict_status")),
         "user_attention_requirement": str(raw.get("user_attention_requirement") or "NONE").upper(),
         "rights_verification_state": str(raw.get("rights_verification_state") or "UNKNOWN").upper(),
         "source_checked_at": raw.get("source_checked_at"),
@@ -313,7 +321,12 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
         return _decision(opportunity, decision="REJECT", reasons=["NON_POSITIVE_EXPECTED_MARGIN"], now=now_dt)
     if _num(opportunity.get("expected_profit_per_laptop_hour")) <= 0:
         return _decision(opportunity, decision="REJECT", reasons=["NON_POSITIVE_LAPTOP_HOUR_PROFIT"], now=now_dt)
-    if opportunity.get("duplicate_conflict_status") in {"DUPLICATE", "CONFLICT"}:
+
+    duplicate_status = _known_duplicate_conflict_status(opportunity.get("duplicate_conflict_status"))
+    if duplicate_status is None:
+        return _decision(opportunity, decision="REVALIDATE", reasons=["DUPLICATE_CONFLICT_EVIDENCE_UNKNOWN_OR_INVALID"], now=now_dt,
+                         requires_revalidation=True, revalidation_fields=["duplicate_conflict_status"])
+    if duplicate_status in {"DUPLICATE", "CONFLICT"}:
         return _decision(opportunity, decision="PAUSE", reasons=["DUPLICATE_OR_CONFLICT"], now=now_dt)
 
     score, missing = _priority_score(opportunity)

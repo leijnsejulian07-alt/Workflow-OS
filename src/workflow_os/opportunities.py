@@ -44,6 +44,11 @@ def _known_num(value: Any) -> float | None:
         return None
 
 
+def _known_nonnegative_num(value: Any) -> float | None:
+    n = _known_num(value)
+    return n if n is not None and n >= 0.0 else None
+
+
 def _known_probability(value: Any) -> float | None:
     n = _known_num(value)
     return n if n is not None and 0.0 <= n <= 1.0 else None
@@ -69,15 +74,19 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
     collection = _known_probability(raw.get("probability_collection"))
     owner_minutes_raw = _known_num(raw.get("expected_owner_minutes"))
     owner_minutes = max(0.0, owner_minutes_raw) if owner_minutes_raw is not None else None
-    gross = max(0.0, _num(raw.get("expected_revenue"), 0.0))
-    collectible = raw.get("expected_collectible_revenue")
-    if collectible is None and success is not None and collection is not None:
-        collectible = gross * success * collection
-    collectible_num = max(0.0, _num(collectible)) if collectible is not None else None
-    cost = max(0.0, _num(raw.get("expected_production_cost"), 0.0))
-    minutes = max(0.0, _num(raw.get("expected_laptop_minutes"), 0.0))
-    net = collectible_num - cost if collectible_num is not None else None
-    per_hour = (net / (minutes / 60.0) if minutes > 0 else net) if net is not None else None
+    gross = _known_nonnegative_num(raw.get("expected_revenue"))
+    collectible_raw = raw.get("expected_collectible_revenue")
+    if collectible_raw is None:
+        collectible_num = gross * success * collection if gross is not None and success is not None and collection is not None else None
+    else:
+        collectible_num = _known_nonnegative_num(collectible_raw)
+    cost = _known_nonnegative_num(raw.get("expected_production_cost"))
+    minutes = _known_nonnegative_num(raw.get("expected_laptop_minutes"))
+    net = collectible_num - cost if collectible_num is not None and cost is not None else None
+    if net is None or minutes is None:
+        per_hour = None
+    else:
+        per_hour = net / (minutes / 60.0) if minutes > 0 else net
 
     return {
         **raw,
@@ -259,7 +268,16 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
     if deadline <= now_dt:
         return _decision(opportunity, decision="REJECT", reasons=["DEADLINE_EXPIRED"], now=now_dt)
 
-    economic_unknown = [name for name in ("estimated_success_probability", "probability_collection", "expected_collectible_revenue", "expected_net_profit", "expected_profit_per_laptop_hour") if opportunity.get(name) is None]
+    economic_unknown = [name for name in (
+        "expected_revenue",
+        "expected_production_cost",
+        "expected_laptop_minutes",
+        "estimated_success_probability",
+        "probability_collection",
+        "expected_collectible_revenue",
+        "expected_net_profit",
+        "expected_profit_per_laptop_hour",
+    ) if opportunity.get(name) is None]
     if economic_unknown:
         return _decision(opportunity, decision="REVALIDATE", reasons=["ECONOMIC_INPUTS_UNKNOWN"], now=now_dt,
                          requires_revalidation=True, revalidation_fields=economic_unknown)

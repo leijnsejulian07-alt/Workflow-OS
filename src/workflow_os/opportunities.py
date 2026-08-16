@@ -79,8 +79,7 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
     now_iso = now_dt.isoformat()
     success = _known_probability(raw.get("estimated_success_probability"))
     collection = _known_probability(raw.get("probability_collection"))
-    owner_minutes_raw = _known_num(raw.get("expected_owner_minutes"))
-    owner_minutes = max(0.0, owner_minutes_raw) if owner_minutes_raw is not None else None
+    owner_minutes = _known_nonnegative_num(raw.get("expected_owner_minutes"))
     gross = _known_nonnegative_num(raw.get("expected_revenue"))
     collectible_raw = raw.get("expected_collectible_revenue")
     if collectible_raw is None:

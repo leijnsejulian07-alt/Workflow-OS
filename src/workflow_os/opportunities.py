@@ -54,6 +54,13 @@ def _known_probability(value: Any) -> float | None:
     return n if n is not None and 0.0 <= n <= 1.0 else None
 
 
+def _known_nonnegative_int(value: Any) -> int | None:
+    n = _known_num(value)
+    if n is None or n < 0 or not n.is_integer():
+        return None
+    return int(n)
+
+
 def _parse_dt(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -83,6 +90,7 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
     cost = _known_nonnegative_num(raw.get("expected_production_cost"))
     minutes = _known_nonnegative_num(raw.get("expected_laptop_minutes"))
     remaining_budget = _known_nonnegative_num(raw.get("remaining_budget"))
+    ttl = _known_nonnegative_int(raw.get("freshness_ttl_seconds"))
     net = collectible_num - cost if collectible_num is not None and cost is not None else None
     if net is None or minutes is None:
         per_hour = None
@@ -117,7 +125,7 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
         "user_attention_requirement": str(raw.get("user_attention_requirement") or "NONE").upper(),
         "rights_verification_state": str(raw.get("rights_verification_state") or "UNKNOWN").upper(),
         "source_checked_at": raw.get("source_checked_at"),
-        "freshness_ttl_seconds": max(0, int(_num(raw.get("freshness_ttl_seconds"), 0))),
+        "freshness_ttl_seconds": ttl,
         "deadline": raw.get("deadline"),
         "remaining_budget": remaining_budget,
         "payout_formula": raw.get("payout_formula"),
@@ -164,8 +172,8 @@ def _decision(op: dict[str, Any], *, decision: str, reasons: list[str], now: dat
               requires_revalidation: bool = False, revalidation_fields: list[str] | None = None,
               priority_score: float = 0.0) -> OpportunityDecision:
     checked = _parse_dt(op.get("source_checked_at"))
-    ttl = max(0, int(_num(op.get("freshness_ttl_seconds"), 0)))
-    expiry = checked + timedelta(seconds=ttl) if checked is not None else None
+    ttl = _known_nonnegative_int(op.get("freshness_ttl_seconds"))
+    expiry = checked + timedelta(seconds=ttl) if checked is not None and ttl is not None else None
     return OpportunityDecision(
         opportunity_id=str(op.get("opportunity_id") or "unknown"),
         decision=decision,
@@ -251,8 +259,10 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
 
     stale_fields: list[str] = []
     checked = _parse_dt(opportunity.get("source_checked_at"))
-    ttl = max(0, int(_num(opportunity.get("freshness_ttl_seconds"), 0)))
-    if checked is None or checked > now_dt or ttl <= 0 or checked + timedelta(seconds=ttl) <= now_dt:
+    ttl = _known_nonnegative_int(opportunity.get("freshness_ttl_seconds"))
+    if ttl is None:
+        stale_fields.append("freshness_ttl_seconds")
+    if checked is None or checked > now_dt or ttl is None or ttl <= 0 or checked + timedelta(seconds=ttl) <= now_dt:
         stale_fields.append("source_checked_at")
     for field in ("remaining_budget", "payout_formula"):
         if opportunity.get(field) in (None, "", []):

@@ -82,6 +82,7 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
         collectible_num = _known_nonnegative_num(collectible_raw)
     cost = _known_nonnegative_num(raw.get("expected_production_cost"))
     minutes = _known_nonnegative_num(raw.get("expected_laptop_minutes"))
+    remaining_budget = _known_nonnegative_num(raw.get("remaining_budget"))
     net = collectible_num - cost if collectible_num is not None and cost is not None else None
     if net is None or minutes is None:
         per_hour = None
@@ -118,7 +119,7 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
         "source_checked_at": raw.get("source_checked_at"),
         "freshness_ttl_seconds": max(0, int(_num(raw.get("freshness_ttl_seconds"), 0))),
         "deadline": raw.get("deadline"),
-        "remaining_budget": raw.get("remaining_budget"),
+        "remaining_budget": remaining_budget,
         "payout_formula": raw.get("payout_formula"),
         "discovered_at": raw.get("discovered_at") or now_iso,
         "status": "DISCOVERED",

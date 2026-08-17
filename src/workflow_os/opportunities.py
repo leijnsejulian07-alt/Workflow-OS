@@ -77,6 +77,13 @@ def _known_duplicate_conflict_status(value: Any) -> str | None:
     return status if status in ALLOWED_DUPLICATE_CONFLICT_STATES else None
 
 
+def _known_owner_attention(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    attention = value.strip().upper()
+    return attention if attention in ALLOWED_OWNER_ATTENTION else None
+
+
 def _parse_dt(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -137,7 +144,7 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
         "compliance_risk": _known_risk(raw.get("compliance_risk")),
         "platform_risk": _known_risk(raw.get("platform_risk")),
         "duplicate_conflict_status": _known_duplicate_conflict_status(raw.get("duplicate_conflict_status")),
-        "user_attention_requirement": str(raw.get("user_attention_requirement") or "NONE").upper(),
+        "user_attention_requirement": _known_owner_attention(raw.get("user_attention_requirement")),
         "rights_verification_state": str(raw.get("rights_verification_state") or "UNKNOWN").upper(),
         "source_checked_at": raw.get("source_checked_at"),
         "freshness_ttl_seconds": ttl,
@@ -192,6 +199,7 @@ def _decision(op: dict[str, Any], *, decision: str, reasons: list[str], now: dat
     checked = _parse_dt(op.get("source_checked_at"))
     ttl = _known_nonnegative_int(op.get("freshness_ttl_seconds"))
     expiry = checked + timedelta(seconds=ttl) if checked is not None and ttl is not None else None
+    attention = _known_owner_attention(op.get("user_attention_requirement"))
     return OpportunityDecision(
         opportunity_id=str(op.get("opportunity_id") or "unknown"),
         decision=decision,
@@ -201,7 +209,7 @@ def _decision(op: dict[str, Any], *, decision: str, reasons: list[str], now: dat
         priority_score=priority_score,
         requires_revalidation=requires_revalidation,
         revalidation_fields=tuple(revalidation_fields or []),
-        owner_attention_requirement=str(op.get("user_attention_requirement") or "NONE"),
+        owner_attention_requirement=attention or "UNKNOWN",
         expected_collectible_revenue=max(0.0, _num(op.get("expected_collectible_revenue"))),
         expected_net_profit=_num(op.get("expected_net_profit")),
         expected_profit_per_laptop_hour=_num(op.get("expected_profit_per_laptop_hour")),
@@ -237,7 +245,10 @@ def _priority_score(op: dict[str, Any]) -> tuple[float | None, list[str]]:
     time_n = 1.0 / (1.0 + time_to_cash / 24.0)
     capital_n = 1.0 / (1.0 + capital / 100.0)
     risk_n = max(0.0, 1.0 - _risk_penalty(op) / 4.0)
-    owner_n = 1.0 if str(op.get("user_attention_requirement") or "NONE") == "NONE" else 0.0
+    attention = _known_owner_attention(op.get("user_attention_requirement"))
+    if attention is None:
+        return None, ["user_attention_requirement"]
+    owner_n = 1.0 if attention == "NONE" else 0.0
     score = 100.0 * (
         0.22 * profit_n + 0.12 * collectible_n + 0.18 * laptop_n +
         0.14 * time_n + 0.14 * automation + 0.10 * risk_n +
@@ -274,9 +285,10 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
     if owner_minutes > 0:
         return _decision(opportunity, decision="REJECT", reasons=["RECURRING_OWNER_WORK_REQUIRED"], now=now_dt)
 
-    attention = str(opportunity.get("user_attention_requirement") or "NONE")
-    if attention not in ALLOWED_OWNER_ATTENTION:
-        return _decision(opportunity, decision="REJECT", reasons=["INVALID_OWNER_ATTENTION_STATE"], now=now_dt)
+    attention = _known_owner_attention(opportunity.get("user_attention_requirement"))
+    if attention is None:
+        return _decision(opportunity, decision="REVALIDATE", reasons=["OWNER_ATTENTION_EVIDENCE_UNKNOWN_OR_INVALID"], now=now_dt,
+                         requires_revalidation=True, revalidation_fields=["user_attention_requirement"])
     if attention in PAUSE_OWNER_ATTENTION:
         return _decision(opportunity, decision="PAUSE", reasons=[f"OWNER_ATTENTION_{attention}"], now=now_dt)
 

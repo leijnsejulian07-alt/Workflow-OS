@@ -38,6 +38,11 @@ class RemainingBudgetIntegrityTests(unittest.TestCase):
             "deadline": (NOW + timedelta(days=2)).isoformat(),
             "remaining_budget": 1000,
             "payout_formula": "EUR 1 per qualified unit",
+            "payout_cap": 1000,
+            "payment_method": "platform payout",
+            "approval_rules": "Qualified units are approved under the campaign rules",
+            "originality_requirements": "Original compliant production required",
+            "account_requirements": [],
         }
 
     def assert_revalidates(self, value):

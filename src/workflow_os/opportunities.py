@@ -299,9 +299,10 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
         stale_fields.append("freshness_ttl_seconds")
     if checked is None or checked > now_dt or ttl is None or ttl <= 0 or checked + timedelta(seconds=ttl) <= now_dt:
         stale_fields.append("source_checked_at")
-    for field in ("remaining_budget", "payout_formula"):
-        if opportunity.get(field) in (None, "", []):
-            stale_fields.append(field)
+    if _known_nonnegative_num(opportunity.get("remaining_budget")) is None:
+        stale_fields.append("remaining_budget")
+    if opportunity.get("payout_formula") in (None, "", []):
+        stale_fields.append("payout_formula")
     deadline_raw = opportunity.get("deadline")
     deadline = _parse_dt(deadline_raw)
     if deadline_raw in (None, "", []):

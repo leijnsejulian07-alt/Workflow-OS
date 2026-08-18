@@ -348,18 +348,6 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
     if deadline <= now_dt:
         return _decision(opportunity, decision="REJECT", reasons=["DEADLINE_EXPIRED"], now=now_dt)
 
-    payment_evidence = {
-        "payout_cap": _known_nonnegative_num(opportunity.get("payout_cap")),
-        "payment_method": _known_text(opportunity.get("payment_method")),
-        "approval_rules": _known_text(opportunity.get("approval_rules")),
-        "originality_requirements": _known_text(opportunity.get("originality_requirements")),
-        "account_requirements": _known_account_requirements(opportunity.get("account_requirements")),
-    }
-    payment_invalid = [name for name, value in payment_evidence.items() if value is None]
-    if payment_invalid:
-        return _decision(opportunity, decision="REVALIDATE", reasons=["PAYOUT_OR_PAYMENT_EVIDENCE_UNKNOWN_OR_INVALID"], now=now_dt,
-                         requires_revalidation=True, revalidation_fields=payment_invalid)
-
     runtime_economic = {
         "expected_revenue": _known_nonnegative_num(opportunity.get("expected_revenue")),
         "expected_production_cost": _known_nonnegative_num(opportunity.get("expected_production_cost")),
@@ -396,4 +384,17 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
     if score is None:
         return _decision(opportunity, decision="REVALIDATE", reasons=["PRIORITY_INPUTS_UNKNOWN_OR_INVALID"], now=now_dt,
                          requires_revalidation=True, revalidation_fields=missing)
+
+    payment_evidence = {
+        "payout_cap": _known_nonnegative_num(opportunity.get("payout_cap")),
+        "payment_method": _known_text(opportunity.get("payment_method")),
+        "approval_rules": _known_text(opportunity.get("approval_rules")),
+        "originality_requirements": _known_text(opportunity.get("originality_requirements")),
+        "account_requirements": _known_account_requirements(opportunity.get("account_requirements")),
+    }
+    payment_invalid = [name for name, value in payment_evidence.items() if value is None]
+    if payment_invalid:
+        return _decision(opportunity, decision="REVALIDATE", reasons=["PAYOUT_OR_PAYMENT_EVIDENCE_UNKNOWN_OR_INVALID"], now=now_dt,
+                         requires_revalidation=True, revalidation_fields=payment_invalid)
+
     return _decision(opportunity, decision="ACCEPT", reasons=[SCORING_VERSION], now=now_dt, priority_score=score)

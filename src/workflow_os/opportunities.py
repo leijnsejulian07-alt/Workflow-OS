@@ -315,24 +315,29 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
     if deadline <= now_dt:
         return _decision(opportunity, decision="REJECT", reasons=["DEADLINE_EXPIRED"], now=now_dt)
 
-    economic_unknown = [name for name in (
-        "expected_revenue",
-        "expected_production_cost",
-        "expected_laptop_minutes",
-        "estimated_success_probability",
-        "probability_collection",
-        "expected_collectible_revenue",
-        "expected_net_profit",
-        "expected_profit_per_laptop_hour",
-    ) if opportunity.get(name) is None]
-    if economic_unknown:
-        return _decision(opportunity, decision="REVALIDATE", reasons=["ECONOMIC_INPUTS_UNKNOWN"], now=now_dt,
-                         requires_revalidation=True, revalidation_fields=economic_unknown)
-    if _num(opportunity.get("expected_collectible_revenue")) <= 0:
+    runtime_economic = {
+        "expected_revenue": _known_nonnegative_num(opportunity.get("expected_revenue")),
+        "expected_production_cost": _known_nonnegative_num(opportunity.get("expected_production_cost")),
+        "expected_laptop_minutes": _known_nonnegative_num(opportunity.get("expected_laptop_minutes")),
+        "estimated_success_probability": _known_probability(opportunity.get("estimated_success_probability")),
+        "probability_collection": _known_probability(opportunity.get("probability_collection")),
+        "expected_collectible_revenue": _known_nonnegative_num(opportunity.get("expected_collectible_revenue")),
+        "expected_net_profit": _known_num(opportunity.get("expected_net_profit")),
+        "expected_profit_per_laptop_hour": _known_num(opportunity.get("expected_profit_per_laptop_hour")),
+    }
+    economic_invalid = [name for name, value in runtime_economic.items() if value is None]
+    if economic_invalid:
+        return _decision(opportunity, decision="REVALIDATE", reasons=["ECONOMIC_INPUTS_UNKNOWN_OR_INVALID"], now=now_dt,
+                         requires_revalidation=True, revalidation_fields=economic_invalid)
+    collectible = runtime_economic["expected_collectible_revenue"]
+    net_profit = runtime_economic["expected_net_profit"]
+    laptop_profit = runtime_economic["expected_profit_per_laptop_hour"]
+    assert collectible is not None and net_profit is not None and laptop_profit is not None
+    if collectible <= 0:
         return _decision(opportunity, decision="REJECT", reasons=["COLLECTIBLE_REVENUE_UNSUPPORTED"], now=now_dt)
-    if _num(opportunity.get("expected_net_profit")) <= 0:
+    if net_profit <= 0:
         return _decision(opportunity, decision="REJECT", reasons=["NON_POSITIVE_EXPECTED_MARGIN"], now=now_dt)
-    if _num(opportunity.get("expected_profit_per_laptop_hour")) <= 0:
+    if laptop_profit <= 0:
         return _decision(opportunity, decision="REJECT", reasons=["NON_POSITIVE_LAPTOP_HOUR_PROFIT"], now=now_dt)
 
     duplicate_status = _known_duplicate_conflict_status(opportunity.get("duplicate_conflict_status"))

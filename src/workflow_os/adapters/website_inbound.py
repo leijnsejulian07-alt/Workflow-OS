@@ -95,6 +95,7 @@ def to_opportunity(lead: dict[str, Any]) -> dict[str, Any]:
     source_checked_at = _iso(lead.get("source_checked_at"), "source_checked_at")
     deadline = _iso(lead.get("quote_expires_at"), "quote_expires_at")
     remaining_budget = _number(lead.get("customer_budget_eur"), "customer_budget_eur", minimum=0)
+    payment_method = _text(lead.get("payment_method"), "payment_method", max_length=80)
 
     fingerprint = hashlib.sha256(f"website-in-a-box|{channel}|{lead_id}".encode()).hexdigest()[:24]
     return {
@@ -128,9 +129,9 @@ def to_opportunity(lead: dict[str, Any]) -> dict[str, Any]:
         "deadline": deadline,
         "remaining_budget": remaining_budget,
         "payout_formula": f"EUR {price:.2f} fixed-price website job",
-        "originality_requirements": ["customer-provided or licensed content only"],
-        "approval_rules": ["fixed-scope automated QA before deployment"],
-        "payment_method": _text(lead.get("payment_method"), "payment_method", max_length=80),
+        "originality_requirements": "Customer-provided or licensed content only",
+        "approval_rules": "Fixed-scope automated QA before deployment",
+        "payment_method": payment_method,
         "minimum_thresholds": {"page_count": 1},
         "payout_cap": price,
         "website_scope": {

@@ -39,6 +39,11 @@ def valid_payload() -> dict:
         "deadline": "2026-08-31T23:59:59+00:00",
         "remaining_budget": 1000,
         "payout_formula": "EUR 100 per approved unit",
+        "payout_cap": 1000,
+        "payment_method": "platform payout",
+        "approval_rules": "platform review required before payout",
+        "originality_requirements": "original compliant content required",
+        "account_requirements": [],
     }
 
 

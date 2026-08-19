@@ -38,6 +38,11 @@ class ProbabilityIntegrityTests(unittest.TestCase):
             "deadline": (NOW + timedelta(days=7)).isoformat(),
             "remaining_budget": 1000,
             "payout_formula": "EUR 1 per qualified unit",
+            "payout_cap": 1000,
+            "payment_method": "Platform payout to verified account",
+            "approval_rules": "Qualified submissions require platform approval",
+            "originality_requirements": "Original compliant edit required",
+            "account_requirements": ["Verified platform account"],
         }
 
     def assert_revalidates_probability(self, field, value):

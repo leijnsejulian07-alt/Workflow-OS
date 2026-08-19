@@ -39,6 +39,11 @@ class OpportunityLedgerTests(unittest.TestCase):
             "deadline": "2026-08-20T12:00:00+00:00",
             "remaining_budget": 1000,
             "payout_formula": "EUR 1 per qualified unit",
+            "payout_cap": 1000,
+            "payment_method": "Platform payout",
+            "approval_rules": "Qualified submission must pass platform review",
+            "originality_requirements": "Original compliant edit required",
+            "account_requirements": [],
         }
 
     def setUp(self):

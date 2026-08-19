@@ -21,7 +21,11 @@ class OpportunityDecisionV2Tests(unittest.TestCase):
             "compliance_risk": "LOW", "platform_risk": "LOW", "duplicate_conflict_status": "CLEAR",
             "user_attention_requirement": "NONE", "source_checked_at": (NOW - timedelta(minutes=5)).isoformat(),
             "freshness_ttl_seconds": 3600, "deadline": "2026-08-20T12:00:00+00:00", "remaining_budget": 1000,
-            "payout_formula": "EUR 1 per qualified unit",
+            "payout_formula": "EUR 1 per qualified unit", "payout_cap": 1000,
+            "payment_method": "Platform payout after approved qualified units",
+            "approval_rules": "Platform reviews submitted units against campaign requirements",
+            "originality_requirements": "Original compliant production using only licensed source assets",
+            "account_requirements": [],
         }
 
     def test_normalizes_collectible_profit_without_false_cash_claim(self):

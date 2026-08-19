@@ -37,6 +37,11 @@ class RuntimeEconomicIntegrityTests(unittest.TestCase):
             "deadline": (NOW + timedelta(days=2)).isoformat(),
             "remaining_budget": 1000,
             "payout_formula": "EUR 1 per qualified unit",
+            "payout_cap": 1000,
+            "payment_method": "Platform payout after approval",
+            "approval_rules": "Qualified unit must pass platform review",
+            "originality_requirements": "Original compliant production required",
+            "account_requirements": [],
         }
         op = normalize(raw, now=NOW)
         self.assertEqual(evaluate(op, now=NOW).decision, "ACCEPT")

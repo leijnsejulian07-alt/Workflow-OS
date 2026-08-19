@@ -21,6 +21,10 @@ def base():
         "user_attention_requirement": "NONE", "source_checked_at": (NOW - timedelta(minutes=5)).isoformat(),
         "freshness_ttl_seconds": 3600, "deadline": (NOW + timedelta(days=2)).isoformat(),
         "remaining_budget": 1000, "payout_formula": "EUR 1 per qualified unit",
+        "payout_cap": 1000, "payment_method": "platform payout",
+        "approval_rules": "Qualified units require platform approval",
+        "originality_requirements": "Original compliant edit required",
+        "account_requirements": [],
     }
 
 

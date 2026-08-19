@@ -13,6 +13,9 @@ ALLOWED_OWNER_ATTENTION = {"NONE", "OWNER_APPROVAL", "KYC", "EXCEPTION", "EMERGE
 PAUSE_OWNER_ATTENTION = {"OWNER_APPROVAL", "KYC", "EXCEPTION", "EMERGENCY"}
 ALLOWED_RISK_LEVELS = {"LOW", "MEDIUM", "HIGH", "BLOCKED"}
 ALLOWED_DUPLICATE_CONFLICT_STATES = {"CLEAR", "DUPLICATE", "CONFLICT"}
+MAX_PAYMENT_TEXT_CHARS = 2048
+MAX_ACCOUNT_REQUIREMENTS = 64
+MAX_ACCOUNT_REQUIREMENT_CHARS = 512
 
 
 def utcnow_dt() -> datetime:
@@ -61,6 +64,27 @@ def _known_nonnegative_int(value: Any) -> int | None:
     if n is None or n < 0 or not n.is_integer():
         return None
     return int(n)
+
+
+def _known_text(value: Any, *, max_chars: int = MAX_PAYMENT_TEXT_CHARS) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > max_chars:
+        return None
+    return text
+
+
+def _known_account_requirements(value: Any) -> list[str] | None:
+    if not isinstance(value, list) or len(value) > MAX_ACCOUNT_REQUIREMENTS:
+        return None
+    normalized: list[str] = []
+    for item in value:
+        text = _known_text(item, max_chars=MAX_ACCOUNT_REQUIREMENT_CHARS)
+        if text is None:
+            return None
+        normalized.append(text)
+    return normalized
 
 
 def _known_risk(value: Any) -> str | None:
@@ -112,6 +136,11 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
     cost = _known_nonnegative_num(raw.get("expected_production_cost"))
     minutes = _known_nonnegative_num(raw.get("expected_laptop_minutes"))
     remaining_budget = _known_nonnegative_num(raw.get("remaining_budget"))
+    payout_cap = _known_nonnegative_num(raw.get("payout_cap"))
+    payment_method = _known_text(raw.get("payment_method"))
+    approval_rules = _known_text(raw.get("approval_rules"))
+    originality_requirements = _known_text(raw.get("originality_requirements"))
+    account_requirements = _known_account_requirements(raw.get("account_requirements"))
     ttl = _known_nonnegative_int(raw.get("freshness_ttl_seconds"))
     net = collectible_num - cost if collectible_num is not None and cost is not None else None
     if net is None or minutes is None:
@@ -131,7 +160,7 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
         "source_assets": list(raw.get("source_assets") or []),
         "usage_rights": str(raw.get("usage_rights") or ""),
         "disclosure_requirements": list(raw.get("disclosure_requirements") or []),
-        "account_requirements": list(raw.get("account_requirements") or []),
+        "account_requirements": account_requirements,
         "expected_production_cost": cost,
         "estimated_success_probability": success,
         "probability_collection": collection,
@@ -151,6 +180,10 @@ def normalize(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, 
         "deadline": raw.get("deadline"),
         "remaining_budget": remaining_budget,
         "payout_formula": raw.get("payout_formula"),
+        "payout_cap": payout_cap,
+        "payment_method": payment_method,
+        "approval_rules": approval_rules,
+        "originality_requirements": originality_requirements,
         "discovered_at": raw.get("discovered_at") or now_iso,
         "status": "DISCOVERED",
     }
@@ -351,4 +384,17 @@ def evaluate(opportunity: dict[str, Any], *, now: datetime | None = None) -> Opp
     if score is None:
         return _decision(opportunity, decision="REVALIDATE", reasons=["PRIORITY_INPUTS_UNKNOWN_OR_INVALID"], now=now_dt,
                          requires_revalidation=True, revalidation_fields=missing)
+
+    payment_evidence = {
+        "payout_cap": _known_nonnegative_num(opportunity.get("payout_cap")),
+        "payment_method": _known_text(opportunity.get("payment_method")),
+        "approval_rules": _known_text(opportunity.get("approval_rules")),
+        "originality_requirements": _known_text(opportunity.get("originality_requirements")),
+        "account_requirements": _known_account_requirements(opportunity.get("account_requirements")),
+    }
+    payment_invalid = [name for name, value in payment_evidence.items() if value is None]
+    if payment_invalid:
+        return _decision(opportunity, decision="REVALIDATE", reasons=["PAYOUT_OR_PAYMENT_EVIDENCE_UNKNOWN_OR_INVALID"], now=now_dt,
+                         requires_revalidation=True, revalidation_fields=payment_invalid)
+
     return _decision(opportunity, decision="ACCEPT", reasons=[SCORING_VERSION], now=now_dt, priority_score=score)

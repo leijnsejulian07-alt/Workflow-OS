@@ -38,6 +38,11 @@ class EconomicEvidenceIntegrityTests(unittest.TestCase):
             "deadline": (NOW + timedelta(days=2)).isoformat(),
             "remaining_budget": 1000,
             "payout_formula": "EUR 1 per qualified unit",
+            "payout_cap": 1000,
+            "payment_method": "Platform payout after approval",
+            "approval_rules": "Qualified deliverables are reviewed under the campaign rules",
+            "originality_requirements": "Original compliant edit required",
+            "account_requirements": [],
         }
 
     def assert_revalidates_field(self, field, value):

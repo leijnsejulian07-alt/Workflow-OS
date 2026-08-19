@@ -37,6 +37,11 @@ class DuplicateConflictIntegrityTests(unittest.TestCase):
             "deadline": "2026-08-20T12:00:00+00:00",
             "remaining_budget": 1000,
             "payout_formula": "EUR 1 per qualified unit",
+            "payout_cap": 1000,
+            "payment_method": "platform payout",
+            "approval_rules": "Platform approval after qualified delivery",
+            "originality_requirements": "Original compliant output required",
+            "account_requirements": [],
         }
 
     def assert_revalidates_duplicate_evidence(self, raw):

@@ -38,6 +38,11 @@ class RuntimeRemainingBudgetIntegrityTests(unittest.TestCase):
             "deadline": (NOW + timedelta(days=2)).isoformat(),
             "remaining_budget": 1000,
             "payout_formula": "EUR 1 per qualified unit",
+            "payout_cap": 1000,
+            "payment_method": "Platform payout to verified account",
+            "approval_rules": "Qualified units require platform approval",
+            "originality_requirements": "Original compliant production required",
+            "account_requirements": [],
         }
         return normalize(raw, now=NOW)
 

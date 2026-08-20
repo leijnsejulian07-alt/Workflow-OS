@@ -7,6 +7,7 @@ from urllib.error import URLError
 
 from workflow_os.adapters.tiktok_direct_post import (
     TikTokInitRequest,
+    TikTokUploadRequest,
     build_upload_request,
     plan_file_upload,
 )
@@ -53,6 +54,10 @@ class FakeOpener:
         return response
 
 
+def valid_headers(token="secret-token"):
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=UTF-8"}
+
+
 class TikTokHttpTransportTests(unittest.TestCase):
     def test_posts_bounded_json_to_exact_api_origin(self):
         payload = {"data": {"publish_id": "v_pub_123"}, "error": {"code": "ok"}}
@@ -60,7 +65,7 @@ class TikTokHttpTransportTests(unittest.TestCase):
         transport = TikTokHttpTransport(opener=opener, timeout_seconds=5)
         request = TikTokInitRequest(
             url="https://open.tiktokapis.com/v2/post/publish/video/init/",
-            headers={"Authorization": "Bearer secret-token", "Content-Type": "application/json"},
+            headers={**valid_headers(), "Host": "evil.example", "X-Untrusted": "bad"},
             json_body={"source_info": {"source": "FILE_UPLOAD"}},
         )
 
@@ -72,13 +77,16 @@ class TikTokHttpTransportTests(unittest.TestCase):
         self.assertEqual(sent.full_url, request.url)
         self.assertEqual(timeout, 5.0)
         self.assertIn(b"FILE_UPLOAD", sent.data)
+        sent_headers = {name.lower(): value for name, value in sent.header_items()}
+        self.assertNotIn("x-untrusted", sent_headers)
+        self.assertNotEqual(sent_headers.get("host"), "evil.example")
 
     def test_rejects_unexpected_api_origin_before_network(self):
         opener = FakeOpener([])
         transport = TikTokHttpTransport(opener=opener)
         request = TikTokInitRequest(
             url="https://open.tiktokapis.com.evil.example/v2/post/publish/video/init/",
-            headers={"Authorization": "Bearer secret-token"},
+            headers=valid_headers(),
             json_body={},
         )
         with self.assertRaises(ValueError):
@@ -89,7 +97,7 @@ class TikTokHttpTransportTests(unittest.TestCase):
         token = "super-secret-token"
         request = TikTokInitRequest(
             url="https://open.tiktokapis.com/v2/post/publish/video/init/",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=valid_headers(token),
             json_body={},
         )
         transport = TikTokHttpTransport(opener=FakeOpener([FakeResponse(500, b"server error")]))
@@ -106,7 +114,7 @@ class TikTokHttpTransportTests(unittest.TestCase):
         huge = b"x" * (256 * 1024 + 1)
         request = TikTokInitRequest(
             url="https://open.tiktokapis.com/v2/post/publish/video/init/",
-            headers={},
+            headers=valid_headers(),
             json_body={},
         )
         with self.assertRaises(TikTokTransportError):
@@ -158,7 +166,7 @@ class TikTokHttpTransportTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 read_verified_chunk(verified, request)
 
-    def test_put_chunk_requires_exact_bytes_and_expected_tiktok_ack(self):
+    def test_put_chunk_requires_exact_origin_bytes_and_expected_tiktok_ack(self):
         chunk = plan_file_upload(6).chunks[0]
         request = build_upload_request(
             "https://open-upload.tiktokapis.com/video/?upload_id=123&upload_token=abc",
@@ -184,6 +192,21 @@ class TikTokHttpTransportTests(unittest.TestCase):
                 data=b"abcdef",
                 is_final_chunk=True,
             )
+
+        hostile = TikTokUploadRequest(
+            url="https://open-upload.tiktokapis.com.evil.example/upload/?token=secret",
+            headers=request.headers,
+            start_byte=request.start_byte,
+            end_byte=request.end_byte,
+        )
+        hostile_opener = FakeOpener([])
+        with self.assertRaises(ValueError):
+            TikTokHttpTransport(opener=hostile_opener).put_chunk(
+                hostile,
+                data=b"abcdef",
+                is_final_chunk=True,
+            )
+        self.assertEqual(hostile_opener.requests, [])
 
     def test_timeout_boundary_is_bounded(self):
         for timeout in (0.5, 121, True, "30"):

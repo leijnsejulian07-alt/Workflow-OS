@@ -1,11 +1,17 @@
 import unittest
 
 from workflow_os.adapters.tiktok_direct_post import (
+    TIKTOK_STATUS_FETCH_URL,
     TIKTOK_VIDEO_INIT_URL,
     TikTokCreatorSnapshot,
     TikTokDirectPostOptions,
+    build_status_request,
+    build_upload_request,
     build_video_init_request,
+    parse_status_response,
+    parse_upload_response,
     parse_video_init_response,
+    plan_file_upload,
 )
 from workflow_os.submissions import SubmissionAsset, SubmissionRequest
 
@@ -41,7 +47,7 @@ class TikTokDirectPostTests(unittest.TestCase):
         values.update(changes)
         return TikTokDirectPostOptions(**values)
 
-    def test_builds_official_video_init_request(self):
+    def test_builds_official_video_init_request_with_chunk_contract(self):
         built = build_video_init_request(
             self.valid_request(),
             options=self.options(),
@@ -49,8 +55,11 @@ class TikTokDirectPostTests(unittest.TestCase):
         )
         self.assertEqual(built.url, TIKTOK_VIDEO_INIT_URL)
         self.assertEqual(built.headers["Authorization"], "Bearer token-123")
-        self.assertEqual(built.json_body["source_info"]["source"], "FILE_UPLOAD")
-        self.assertEqual(built.json_body["source_info"]["video_size"], 6_000_000)
+        source = built.json_body["source_info"]
+        self.assertEqual(source["source"], "FILE_UPLOAD")
+        self.assertEqual(source["video_size"], 6_000_000)
+        self.assertEqual(source["chunk_size"], 6_000_000)
+        self.assertEqual(source["total_chunk_count"], 1)
         self.assertEqual(built.json_body["post_info"]["privacy_level"], "SELF_ONLY")
 
     def test_unaudited_client_fails_closed_to_private(self):
@@ -143,19 +152,109 @@ class TikTokDirectPostTests(unittest.TestCase):
         self.assertEqual(result.publish_id, "v_pub_123")
         self.assertTrue(result.upload_url.startswith("https://open-upload.tiktokapis.com/"))
 
-    def test_init_response_fails_closed_on_error_or_unexpected_upload_host(self):
+    def test_init_response_fails_closed_on_error_or_unexpected_upload_origin(self):
         with self.assertRaises(ValueError):
             parse_video_init_response({"data": {}, "error": {"code": "access_token_invalid"}})
+        for url in (
+            "https://evil.example/upload/123",
+            "https://open-upload.tiktokapis.com.evil.example/upload/123",
+            "https://user@open-upload.tiktokapis.com/upload/123",
+            "http://open-upload.tiktokapis.com/upload/123",
+        ):
+            with self.subTest(url=url):
+                with self.assertRaises(ValueError):
+                    parse_video_init_response(
+                        {
+                            "data": {"publish_id": "v_pub_123", "upload_url": url},
+                            "error": {"code": "ok"},
+                        }
+                    )
+
+    def test_plans_whole_file_and_large_sequential_chunks(self):
+        whole = plan_file_upload(4 * 1024 * 1024)
+        self.assertEqual(whole.total_chunk_count, 1)
+        self.assertEqual(whole.chunk_size, 4 * 1024 * 1024)
+        self.assertEqual(whole.chunks[0].content_range, f"bytes 0-{4 * 1024 * 1024 - 1}/{4 * 1024 * 1024}")
+
+        large_size = 130 * 1024 * 1024
+        chunked = plan_file_upload(large_size)
+        self.assertEqual(chunked.total_chunk_count, 2)
+        self.assertEqual(chunked.chunk_size, 64 * 1024 * 1024)
+        self.assertEqual(chunked.chunks[0].start_byte, 0)
+        self.assertEqual(chunked.chunks[1].start_byte, 64 * 1024 * 1024)
+        self.assertEqual(chunked.chunks[1].end_byte, large_size - 1)
+
+    def test_upload_request_uses_exact_range_and_expected_status(self):
+        plan = plan_file_upload(130 * 1024 * 1024)
+        built = build_upload_request(
+            "https://open-upload.tiktokapis.com/video/?upload_id=123&upload_token=abc",
+            media_type="video/mp4",
+            chunk=plan.chunks[0],
+        )
+        self.assertEqual(built.headers["Content-Length"], str(64 * 1024 * 1024))
+        self.assertEqual(built.headers["Content-Range"], plan.chunks[0].content_range)
+        self.assertTrue(parse_upload_response(206, is_final_chunk=False))
+        self.assertTrue(parse_upload_response(201, is_final_chunk=True))
         with self.assertRaises(ValueError):
-            parse_video_init_response(
-                {
-                    "data": {
-                        "publish_id": "v_pub_123",
-                        "upload_url": "https://evil.example/upload/123",
-                    },
-                    "error": {"code": "ok"},
-                }
-            )
+            parse_upload_response(201, is_final_chunk=False)
+        with self.assertRaises(ValueError):
+            parse_upload_response(500, is_final_chunk=True)
+
+    def test_builds_bounded_status_request(self):
+        built = build_status_request(publish_id="v_pub_123", access_token="token-123")
+        self.assertEqual(built.url, TIKTOK_STATUS_FETCH_URL)
+        self.assertEqual(built.json_body, {"publish_id": "v_pub_123"})
+        self.assertEqual(built.headers["Authorization"], "Bearer token-123")
+        for publish_id in ("", "bad id", "x" * 65):
+            with self.subTest(publish_id=publish_id):
+                with self.assertRaises(ValueError):
+                    build_status_request(publish_id=publish_id, access_token="token-123")
+
+    def test_status_processing_is_not_mistaken_for_success(self):
+        parsed = parse_status_response(
+            {
+                "data": {"status": "PROCESSING_UPLOAD", "uploaded_bytes": 1234},
+                "error": {"code": "ok"},
+            }
+        )
+        self.assertFalse(parsed.terminal)
+        self.assertFalse(parsed.succeeded)
+        self.assertEqual(parsed.uploaded_bytes, 1234)
+
+    def test_status_publish_complete_and_failed_are_terminal(self):
+        complete = parse_status_response(
+            {
+                "data": {"status": "PUBLISH_COMPLETE", "publicaly_available_post_id": [123456789]},
+                "error": {"code": "ok"},
+            }
+        )
+        self.assertTrue(complete.terminal)
+        self.assertTrue(complete.succeeded)
+        self.assertEqual(complete.post_ids, ("123456789",))
+
+        failed = parse_status_response(
+            {
+                "data": {"status": "FAILED", "fail_reason": "file_format_check_failed"},
+                "error": {"code": "ok"},
+            }
+        )
+        self.assertTrue(failed.terminal)
+        self.assertFalse(failed.succeeded)
+        self.assertEqual(failed.fail_reason, "file_format_check_failed")
+
+    def test_status_fails_closed_on_unknown_or_malformed_state(self):
+        bad_payloads = (
+            {"data": {"status": "SOMETHING_NEW"}, "error": {"code": "ok"}},
+            {"data": {"status": "FAILED"}, "error": {"code": "ok"}},
+            {"data": {"status": "PUBLISH_COMPLETE", "fail_reason": "unexpected"}, "error": {"code": "ok"}},
+            {"data": {"status": "PUBLISH_COMPLETE", "publicaly_available_post_id": [True]}, "error": {"code": "ok"}},
+            {"data": {"status": "PROCESSING_UPLOAD", "uploaded_bytes": -1}, "error": {"code": "ok"}},
+            {"data": {}, "error": {"code": "access_token_invalid"}},
+        )
+        for payload in bad_payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValueError):
+                    parse_status_response(payload)
 
 
 if __name__ == "__main__":

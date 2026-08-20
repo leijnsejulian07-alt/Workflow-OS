@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import socket
 from dataclasses import dataclass
 from pathlib import Path
@@ -84,7 +85,13 @@ def verify_local_asset(asset_root: str | Path, asset: SubmissionAsset) -> Verifi
     if not root.is_dir():
         raise ValueError("asset root must be a directory")
 
-    candidate = (root / asset.path).resolve(strict=True)
+    unresolved = (root / asset.path).resolve(strict=False)
+    try:
+        unresolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("submission asset resolves outside the configured asset root") from exc
+
+    candidate = unresolved.resolve(strict=True)
     try:
         candidate.relative_to(root)
     except ValueError as exc:
@@ -128,11 +135,7 @@ def read_verified_chunk(asset: VerifiedLocalAsset, request: TikTokUploadRequest)
         raise ValueError("upload request has an invalid byte range")
 
     with asset.path.open("rb") as handle:
-        stat = handle.stat() if hasattr(handle, "stat") else None
-        if stat is None:
-            import os
-
-            stat = os.fstat(handle.fileno())
+        stat = os.fstat(handle.fileno())
         if stat.st_size != asset.size_bytes or stat.st_mtime_ns != asset.mtime_ns:
             raise ValueError("submission asset changed after verification")
         handle.seek(request.start_byte)

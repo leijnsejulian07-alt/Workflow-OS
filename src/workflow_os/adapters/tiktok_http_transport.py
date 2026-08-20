@@ -25,6 +25,7 @@ _MAX_JSON_RESPONSE_BYTES = 256 * 1024
 _MAX_UPLOAD_RESPONSE_BYTES = 64 * 1024
 _MAX_REQUEST_BODY_BYTES = 256 * 1024
 _HASH_BLOCK_BYTES = 1024 * 1024
+_UPLOAD_HOST = "open-upload.tiktokapis.com"
 
 
 class TikTokTransportError(RuntimeError):
@@ -56,6 +57,52 @@ def _validate_api_url(url: str) -> str:
     ):
         raise ValueError("TikTok API request has an unexpected origin")
     return url
+
+
+def _validate_upload_url(url: str) -> str:
+    parsed = urlparse(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != _UPLOAD_HOST
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port not in (None, 443)
+        or not parsed.path.startswith("/")
+    ):
+        raise ValueError("TikTok upload request has an unexpected origin")
+    return url
+
+
+def _validated_json_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    authorization = headers.get("Authorization")
+    content_type = headers.get("Content-Type")
+    if (
+        not isinstance(authorization, str)
+        or not authorization.startswith("Bearer ")
+        or len(authorization) > 4103
+        or any(ch in authorization for ch in "\r\n")
+    ):
+        raise ValueError("TikTok API request is missing a valid bearer credential")
+    if content_type not in {"application/json", "application/json; charset=UTF-8"}:
+        raise ValueError("TikTok API request has an unexpected content type")
+    return {"Authorization": authorization, "Content-Type": content_type}
+
+
+def _validated_upload_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    content_type = headers.get("Content-Type")
+    content_length = headers.get("Content-Length")
+    content_range = headers.get("Content-Range")
+    if not isinstance(content_type, str) or not content_type.startswith("video/"):
+        raise ValueError("TikTok upload request has an unexpected content type")
+    if not isinstance(content_length, str) or not content_length.isdigit():
+        raise ValueError("TikTok upload request has an invalid Content-Length")
+    if not isinstance(content_range, str) or not content_range.startswith("bytes "):
+        raise ValueError("TikTok upload request has an invalid Content-Range")
+    return {
+        "Content-Type": content_type,
+        "Content-Length": content_length,
+        "Content-Range": content_range,
+    }
 
 
 def _read_bounded(response: Any, *, limit: int) -> bytes:
@@ -187,10 +234,11 @@ class TikTokHttpTransport:
         if not isinstance(request, (TikTokInitRequest, TikTokStatusRequest)):
             raise TypeError("request must be a TikTok init or status request")
         url = _validate_api_url(request.url)
+        headers = _validated_json_headers(request.headers)
         body = json.dumps(request.json_body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         if len(body) > _MAX_REQUEST_BODY_BYTES:
             raise ValueError("TikTok JSON request exceeded the configured size limit")
-        http_request = Request(url, data=body, headers=dict(request.headers), method="POST")
+        http_request = Request(url, data=body, headers=headers, method="POST")
         status, response_body = self._open(http_request, response_limit=_MAX_JSON_RESPONSE_BYTES)
         if status != 200:
             raise TikTokTransportError(f"TikTok API returned HTTP {status}")
@@ -207,11 +255,14 @@ class TikTokHttpTransport:
             raise TypeError("request must be a TikTokUploadRequest")
         if not isinstance(data, bytes):
             raise TypeError("upload chunk data must be bytes")
+
+        url = _validate_upload_url(request.url)
+        headers = _validated_upload_headers(request.headers)
         expected = request.end_byte - request.start_byte + 1
-        if len(data) != expected or request.headers.get("Content-Length") != str(expected):
+        if len(data) != expected or headers["Content-Length"] != str(expected):
             raise ValueError("upload chunk bytes do not match the declared Content-Length")
 
-        http_request = Request(request.url, data=data, headers=dict(request.headers), method="PUT")
+        http_request = Request(url, data=data, headers=headers, method="PUT")
         status, _ = self._open(http_request, response_limit=_MAX_UPLOAD_RESPONSE_BYTES)
         try:
             parse_upload_response(status, is_final_chunk=is_final_chunk)

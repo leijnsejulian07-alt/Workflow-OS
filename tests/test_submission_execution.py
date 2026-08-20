@@ -3,7 +3,11 @@ import unittest
 from pathlib import Path
 
 from workflow_os.side_effects import SideEffectLedger
-from workflow_os.submission_execution import reserve_submission
+from workflow_os.submission_execution import (
+    SubmissionAttemptResult,
+    execute_reserved_submission,
+    reserve_submission,
+)
 from workflow_os.submissions import SubmissionAsset, SubmissionRequest
 
 
@@ -87,6 +91,77 @@ class SubmissionExecutionTests(unittest.TestCase):
         self.assertEqual(unknown.state, "UNKNOWN")
         with self.assertRaises(RuntimeError):
             self.ledger.begin_attempt(key)
+
+    def test_confirmed_platform_success_is_reconciled_with_reference(self):
+        reservation = self.reserve(self.valid_request())
+        record = execute_reserved_submission(
+            reservation,
+            ledger=self.ledger,
+            submit=lambda: SubmissionAttemptResult("APPLIED", "post-123"),
+        )
+        self.assertEqual(record.state, "SUCCEEDED")
+        self.assertEqual(record.external_reference, "post-123")
+        self.assertEqual(record.attempt_count, 1)
+
+    def test_proven_not_applied_is_retryable(self):
+        reservation = self.reserve(self.valid_request())
+        record = execute_reserved_submission(
+            reservation,
+            ledger=self.ledger,
+            submit=lambda: SubmissionAttemptResult("NOT_APPLIED"),
+        )
+        self.assertEqual(record.state, "FAILED_RETRYABLE")
+        retried = self.ledger.begin_attempt(record.idempotency_key)
+        self.assertEqual(retried.attempt_count, 2)
+
+    def test_unknown_result_blocks_blind_retry(self):
+        reservation = self.reserve(self.valid_request())
+        record = execute_reserved_submission(
+            reservation,
+            ledger=self.ledger,
+            submit=lambda: SubmissionAttemptResult("UNKNOWN"),
+        )
+        self.assertEqual(record.state, "UNKNOWN")
+        with self.assertRaises(RuntimeError):
+            self.ledger.begin_attempt(record.idempotency_key)
+
+    def test_adapter_exception_becomes_unknown_before_propagating(self):
+        reservation = self.reserve(self.valid_request())
+        key = reservation.side_effect.idempotency_key
+
+        def fail():
+            raise TimeoutError("connection lost after request dispatch")
+
+        with self.assertRaises(TimeoutError):
+            execute_reserved_submission(reservation, ledger=self.ledger, submit=fail)
+        self.assertEqual(self.ledger.get(key).state, "UNKNOWN")
+
+    def test_invalid_adapter_result_becomes_unknown(self):
+        reservation = self.reserve(self.valid_request())
+        key = reservation.side_effect.idempotency_key
+        with self.assertRaises(TypeError):
+            execute_reserved_submission(reservation, ledger=self.ledger, submit=lambda: {"ok": True})
+        self.assertEqual(self.ledger.get(key).state, "UNKNOWN")
+
+    def test_applied_without_external_reference_fails_closed(self):
+        reservation = self.reserve(self.valid_request())
+        key = reservation.side_effect.idempotency_key
+        with self.assertRaises(ValueError):
+            execute_reserved_submission(
+                reservation,
+                ledger=self.ledger,
+                submit=lambda: SubmissionAttemptResult("APPLIED"),
+            )
+        self.assertEqual(self.ledger.get(key).state, "UNKNOWN")
+
+    def test_denied_submission_cannot_execute(self):
+        reservation = self.reserve(self.valid_request(account_authorized=False))
+        with self.assertRaises(RuntimeError):
+            execute_reserved_submission(
+                reservation,
+                ledger=self.ledger,
+                submit=lambda: SubmissionAttemptResult("APPLIED", "never-called"),
+            )
 
 
 if __name__ == "__main__":

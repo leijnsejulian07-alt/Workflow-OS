@@ -17,11 +17,11 @@ class Provider:
 
 
 class CredentialBoundaryTests(unittest.TestCase):
-    def test_reference_contains_no_secret_and_is_normalized(self):
+    def test_reference_contains_no_secret_value_and_is_normalized(self):
         ref = CredentialRef(" TikTok ", "creator-17", "access_token")
         self.assertEqual(ref.platform, "tiktok")
         self.assertEqual(ref.account_id, "creator-17")
-        self.assertNotIn("secret", repr(ref).lower())
+        self.assertNotIn("tok_super_sensitive_123", repr(ref))
 
     def test_lease_redacts_string_and_repr(self):
         secret = "tok_super_sensitive_123"

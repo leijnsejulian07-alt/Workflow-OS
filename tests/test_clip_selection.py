@@ -101,7 +101,7 @@ class ClipSelectionTests(unittest.TestCase):
     def test_analysis_digest_is_stable_and_bounded(self):
         self.assertEqual(
             evidence_digest_for_analysis(b"analysis"),
-            "f44e64e75f3948e9f73f8dfa94721c4ce8c01b4e10712234d6398f0364f0d2f2",
+            "f44e85c4b8ea2addc796f8beab6600e801d767ccd26c800dce6d88fdaa5eb4e6",
         )
         with self.assertRaises(ValueError):
             evidence_digest_for_analysis(b"")

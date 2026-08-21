@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -33,6 +34,24 @@ def _bounded_int(value: object, field: str, minimum: int, maximum: int) -> int:
     if not minimum <= value <= maximum:
         raise ValueError(f"{field} must be between {minimum} and {maximum}")
     return value
+
+
+def _candidate_id(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("candidate_id must be a string")
+    cleaned = value.strip()
+    if not cleaned or len(cleaned) > 160:
+        raise ValueError("candidate_id must be 1..160 characters")
+    return cleaned
+
+
+def _unit_score(value: object, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be numeric")
+    score = float(value)
+    if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+        raise ValueError(f"{field} must be finite and between 0 and 1")
+    return score
 
 
 def _validate_words(words: Iterable[WordTiming]) -> dict[int, WordTiming]:
@@ -84,9 +103,10 @@ def candidates_from_word_spans(
     for proposal in materialized:
         if not isinstance(proposal, WordSpanProposal):
             raise ValueError("proposals must contain WordSpanProposal values")
-        if proposal.candidate_id in seen_ids:
+        candidate_id = _candidate_id(proposal.candidate_id)
+        if candidate_id in seen_ids:
             raise ValueError("candidate_id values must be unique")
-        seen_ids.add(proposal.candidate_id)
+        seen_ids.add(candidate_id)
 
         start_index = _bounded_int(
             proposal.start_word_index,
@@ -107,12 +127,12 @@ def candidates_from_word_spans(
         end_ms = by_index[end_index].end_ms
         candidates.append(
             ClipCandidate(
-                candidate_id=proposal.candidate_id,
+                candidate_id=candidate_id,
                 start_ms=start_ms,
                 duration_ms=end_ms - start_ms,
-                hook_score=proposal.hook_score,
-                relevance_score=proposal.relevance_score,
-                quality_score=proposal.quality_score,
+                hook_score=_unit_score(proposal.hook_score, "hook_score"),
+                relevance_score=_unit_score(proposal.relevance_score, "relevance_score"),
+                quality_score=_unit_score(proposal.quality_score, "quality_score"),
                 analysis_evidence_sha256=digest,
             )
         )

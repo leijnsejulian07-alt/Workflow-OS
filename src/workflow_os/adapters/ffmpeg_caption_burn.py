@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -64,11 +65,16 @@ def _verify_caption_sidecar(root: Path, sidecar: CaptionSidecar) -> Path:
     payload = path.read_bytes()
     if len(payload) != sidecar.size_bytes:
         raise ValueError("caption sidecar size no longer matches evidence")
-    import hashlib
-
     if hashlib.sha256(payload).hexdigest() != sidecar.sha256:
         raise ValueError("caption sidecar digest no longer matches evidence")
     return path
+
+
+def _escape_subtitle_path(path: Path) -> str:
+    value = path.as_posix().replace("\\", "/")
+    value = value.replace(":", r"\:")
+    value = value.replace("'", r"\'")
+    return value
 
 
 def build_ffmpeg_caption_command(
@@ -79,7 +85,7 @@ def build_ffmpeg_caption_command(
 ) -> tuple[str, ...]:
     if not isinstance(ffmpeg_executable, str) or not ffmpeg_executable.strip():
         raise ValueError("ffmpeg_executable must be a non-empty string")
-    caption_filter = f"subtitles=filename='{caption_path.as_posix().replace(':', r'\:').replace("'", r"\'")}'"
+    caption_filter = "subtitles=filename='" + _escape_subtitle_path(caption_path) + "'"
     return (
         ffmpeg_executable,
         "-nostdin",
@@ -131,7 +137,12 @@ def burn_captions(
     if not root.is_dir():
         raise ValueError("workspace_root must be a directory")
 
-    source = ingest_local_media(root, spec.source.relative_path, producer=spec.source.producer, max_bytes=spec.source.size_bytes)
+    source = ingest_local_media(
+        root,
+        spec.source.relative_path,
+        producer=spec.source.producer,
+        max_bytes=spec.source.size_bytes,
+    )
     if source.size_bytes != spec.source.size_bytes or source.sha256 != spec.source.sha256:
         raise ValueError("source media no longer matches producer evidence")
     if source.media_type not in {"video/mp4", "video/webm"}:
@@ -173,7 +184,12 @@ def burn_captions(
         if not 1 <= size <= max_output_bytes:
             raise RuntimeError("ffmpeg output size is outside allowed bounds")
         os.replace(temp_path, output_path)
-        return ingest_local_media(root, output_relative.as_posix(), producer=producer, max_bytes=max_output_bytes)
+        return ingest_local_media(
+            root,
+            output_relative.as_posix(),
+            producer=producer,
+            max_bytes=max_output_bytes,
+        )
     finally:
         try:
             if temp_path.exists():

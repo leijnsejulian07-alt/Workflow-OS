@@ -130,6 +130,8 @@ def render_clip(
     max_output_bytes = _bounded_int(max_output_bytes, "max_output_bytes", 1, _MAX_OUTPUT_BYTES)
     timeout_seconds = _bounded_int(timeout_seconds, "timeout_seconds", 1, 60 * 60)
     output_relative = _relative_mp4_path(spec.output_relative_path)
+    start_ms = _bounded_int(spec.start_ms, "start_ms", 0, _MAX_START_MS)
+    duration_ms = _bounded_int(spec.duration_ms, "duration_ms", 250, _MAX_DURATION_MS)
 
     root = Path(workspace_root).resolve(strict=True)
     if not root.is_dir():
@@ -156,8 +158,8 @@ def render_clip(
         resolved_ffmpeg,
         source_path,
         temp_path,
-        start_ms=spec.start_ms,
-        duration_ms=spec.duration_ms,
+        start_ms=start_ms,
+        duration_ms=duration_ms,
     )
 
     try:

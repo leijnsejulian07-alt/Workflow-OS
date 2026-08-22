@@ -1,3 +1,4 @@
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -11,7 +12,8 @@ from workflow_os.job_queue import JobQueue
 class JobQueueTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.queue = JobQueue(Path(self.tmp.name) / "workflow-os.sqlite3")
+        self.db_path = Path(self.tmp.name) / "workflow-os.sqlite3"
+        self.queue = JobQueue(self.db_path)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -21,7 +23,7 @@ class JobQueueTests(unittest.TestCase):
             idempotency_key="job-1",
             opportunity_id="op-1",
             job_type="produce_clip",
-            payload={"clip_id": "c1"},
+            payload={"clip_id": "c1", "nested": {"slot": 1}},
             available_at="2026-08-22T10:00:00+00:00",
             max_attempts=max_attempts,
         )
@@ -33,6 +35,68 @@ class JobQueueTests(unittest.TestCase):
         self._enqueue(max_attempts=3)
         with self.assertRaises(ValueError):
             self._enqueue(max_attempts=4)
+
+    def test_claimed_worker_can_recover_exact_payload(self):
+        self._enqueue()
+        job = self.queue.claim(
+            worker_id="worker-a",
+            now="2026-08-22T10:00:00+00:00",
+            lease_seconds=60,
+        )
+        payload = self.queue.read_leased_payload(
+            job.job_id,
+            worker_id="worker-a",
+            now="2026-08-22T10:00:30+00:00",
+        )
+        self.assertEqual(payload, {"clip_id": "c1", "nested": {"slot": 1}})
+        payload["nested"]["slot"] = 99
+        self.assertEqual(
+            self.queue.read_leased_payload(
+                job.job_id,
+                worker_id="worker-a",
+                now="2026-08-22T10:00:31+00:00",
+            )["nested"]["slot"],
+            1,
+        )
+
+    def test_payload_read_requires_live_lease_owner(self):
+        self._enqueue()
+        job = self.queue.claim(
+            worker_id="worker-a",
+            now="2026-08-22T10:00:00+00:00",
+            lease_seconds=60,
+        )
+        with self.assertRaises(RuntimeError):
+            self.queue.read_leased_payload(
+                job.job_id,
+                worker_id="worker-b",
+                now="2026-08-22T10:00:30+00:00",
+            )
+        with self.assertRaises(RuntimeError):
+            self.queue.read_leased_payload(
+                job.job_id,
+                worker_id="worker-a",
+                now="2026-08-22T10:01:00+00:00",
+            )
+
+    def test_payload_read_detects_persisted_tampering(self):
+        self._enqueue()
+        job = self.queue.claim(
+            worker_id="worker-a",
+            now="2026-08-22T10:00:00+00:00",
+            lease_seconds=60,
+        )
+        with sqlite3.connect(self.db_path) as db:
+            db.execute(
+                "UPDATE jobs SET request_json=? WHERE job_id=?",
+                ('{"clip_id":"tampered"}', job.job_id),
+            )
+        with self.assertRaises(RuntimeError):
+            self.queue.read_leased_payload(
+                job.job_id,
+                worker_id="worker-a",
+                now="2026-08-22T10:00:30+00:00",
+            )
 
     def test_claim_and_complete_require_live_lease_owner(self):
         self._enqueue()

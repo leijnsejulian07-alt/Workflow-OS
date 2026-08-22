@@ -77,6 +77,17 @@ class JobQueue:
             if not row: return None
             db.execute("UPDATE jobs SET state='LEASED',attempt_count=attempt_count+1,worker_id=?,lease_expires_at=?,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE job_id=?",(worker,until,row['job_id']))
             return self._row(db.execute("SELECT * FROM jobs WHERE job_id=?",(row['job_id'],)).fetchone())
+    def read_leased_payload(self,job_id:int,*,worker_id:object,now:object)->Any:
+        """Return a fresh JSON-decoded payload only to the current live lease owner."""
+        worker=_id(worker_id,"worker_id",200); now_s=_ts(now,"now")
+        with self._connect() as db:
+            row=self._req(db,job_id); self._owned_live(row,worker,now_s)
+            try: payload=json.loads(row['request_json'])
+            except (TypeError,json.JSONDecodeError) as exc: raise RuntimeError("persisted job payload is invalid JSON") from exc
+            canonical=_payload(payload)
+            expected=hashlib.sha256(f"{row['job_type']}\n{row['opportunity_id']}\n{canonical}".encode()).hexdigest()
+            if expected!=row['request_fingerprint']: raise RuntimeError("persisted job payload fingerprint mismatch")
+            return payload
     def complete(self,job_id:int,*,worker_id:object,now:object)->JobRecord:
         worker=_id(worker_id,"worker_id",200); now_s=_ts(now,"now")
         with self._connect() as db:

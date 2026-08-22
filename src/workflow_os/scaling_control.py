@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .experiment_ledger import ExperimentLedger
 from .ledger import OpportunityLedger
 from .reconciliation import RevenueReconciliationLedger
 
-POLICY_VERSION = "reconciled-scaling-control/1"
+POLICY_VERSION = "reconciled-scaling-control/2"
 
 
 @dataclass(frozen=True)
@@ -40,10 +41,8 @@ def scaling_directive(
 ) -> ScalingDirective:
     """Translate reconciled economics into a bounded scheduling directive.
 
-    A zero-sample opportunity may receive one bounded experiment job so Workflow OS
-    can reach first cash. Once reconciled samples exist, realized cash/cost evidence
-    is the only source of KEEP/SCALE/PAUSE/KILL authority. This function never
-    bypasses upstream eligibility, rights, account, or submission gates.
+    This is a pure policy decision. Persistent first-experiment enforcement occurs
+    at the controlled-queue boundary through ExperimentLedger.
     """
     for name, value, minimum in (
         ("experiment_jobs", experiment_jobs, 1),
@@ -102,7 +101,9 @@ def scaling_directive(
 def revenue_controlled_queue_candidates(
     opportunities: OpportunityLedger,
     reconciliation: RevenueReconciliationLedger,
+    experiments: ExperimentLedger,
     *,
+    reserved_at: str,
     limit: int = 50,
     experiment_jobs: int = 1,
     keep_jobs: int = 1,
@@ -110,12 +111,11 @@ def revenue_controlled_queue_candidates(
     min_samples_to_scale: int = 3,
     min_realized_profit_to_scale_eur: float = 25.0,
 ) -> list[dict[str, Any]]:
-    """Return only upstream-eligible candidates allowed by realized economics.
+    """Return upstream-eligible candidates allowed by realized economics.
 
-    The OpportunityLedger remains the first gate. This layer can only reduce or
-    bound scheduling authority; it cannot turn a rejected or ineligible opportunity
-    into a candidate. SCALE increases only the bounded job allowance, never rights,
-    spend approval, account authorization, or publication authority.
+    A zero-sample opportunity is persisted before it is returned as EXPERIMENT.
+    Subsequent scheduler runs therefore cannot create another first-experiment
+    batch while settlement evidence is still absent.
     """
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 500:
         raise ValueError("limit must be between 1 and 500")
@@ -140,6 +140,15 @@ def revenue_controlled_queue_candidates(
         )
         if not directive.may_schedule:
             continue
+
+        if directive.action == "EXPERIMENT":
+            if not experiments.may_reserve_first_experiment(opportunity_id):
+                continue
+            experiments.reserve_first_experiment(
+                opportunity_id=opportunity_id,
+                experiment_key=f"{POLICY_VERSION}:{opportunity_id}",
+                reserved_at=reserved_at,
+            )
 
         item = dict(candidate)
         item["revenue_control"] = directive.to_dict()

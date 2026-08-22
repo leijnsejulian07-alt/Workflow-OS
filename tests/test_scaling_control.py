@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from workflow_os.experiment_ledger import ExperimentLedger
 from workflow_os.ledger import OpportunityLedger
 from workflow_os.opportunities import OpportunityDecision
 from workflow_os.reconciliation import RevenueReconciliationLedger
@@ -17,6 +18,7 @@ class ScalingControlTests(unittest.TestCase):
         self.path = Path(self.tmp.name) / "workflow-os.sqlite3"
         self.opportunities = OpportunityLedger(self.path)
         self.reconciliation = RevenueReconciliationLedger(self.path)
+        self.experiments = ExperimentLedger(self.path)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -104,9 +106,46 @@ class ScalingControlTests(unittest.TestCase):
         candidates = revenue_controlled_queue_candidates(
             self.opportunities,
             self.reconciliation,
+            self.experiments,
+            reserved_at="2026-08-22T10:00:00+00:00",
         )
         self.assertEqual([item["opportunity_id"] for item in candidates], ["op-experiment"])
         self.assertEqual(candidates[0]["revenue_control"]["action"], "EXPERIMENT")
+
+    def test_repeated_scheduler_run_cannot_grant_second_first_experiment(self):
+        self._record_opportunity("op-1")
+        first = revenue_controlled_queue_candidates(
+            self.opportunities,
+            self.reconciliation,
+            self.experiments,
+            reserved_at="2026-08-22T10:00:00+00:00",
+        )
+        second = revenue_controlled_queue_candidates(
+            self.opportunities,
+            self.reconciliation,
+            self.experiments,
+            reserved_at="2026-08-22T10:05:00+00:00",
+        )
+        self.assertEqual([item["opportunity_id"] for item in first], ["op-1"])
+        self.assertEqual(second, [])
+
+    def test_realized_evidence_can_schedule_after_experiment_reservation(self):
+        self._record_opportunity("op-1")
+        revenue_controlled_queue_candidates(
+            self.opportunities,
+            self.reconciliation,
+            self.experiments,
+            reserved_at="2026-08-22T10:00:00+00:00",
+        )
+        self._event("op-1", "a1", "CASH_RECEIVED", "20.00")
+        self._event("op-1", "b1", "COST_INCURRED", "5.00")
+        candidates = revenue_controlled_queue_candidates(
+            self.opportunities,
+            self.reconciliation,
+            self.experiments,
+            reserved_at="2026-08-22T10:10:00+00:00",
+        )
+        self.assertEqual(candidates[0]["revenue_control"]["action"], "KEEP")
 
     def test_invalid_job_bounds_fail_closed(self):
         with self.assertRaises(ValueError):

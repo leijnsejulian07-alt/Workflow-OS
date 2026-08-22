@@ -29,7 +29,12 @@ class JobQueueTests(unittest.TestCase):
     def test_enqueue_is_idempotent(self):
         self.assertEqual(self._enqueue(), self._enqueue())
 
-    def test_claim_and_complete_require_lease_owner(self):
+    def test_idempotency_key_rejects_retry_budget_drift(self):
+        self._enqueue(max_attempts=3)
+        with self.assertRaises(ValueError):
+            self._enqueue(max_attempts=4)
+
+    def test_claim_and_complete_require_live_lease_owner(self):
         self._enqueue()
         job = self.queue.claim(
             worker_id="worker-a",
@@ -39,11 +44,49 @@ class JobQueueTests(unittest.TestCase):
         self.assertEqual(job.state, "LEASED")
         self.assertEqual(job.attempt_count, 1)
         with self.assertRaises(RuntimeError):
-            self.queue.complete(job.job_id, worker_id="worker-b")
+            self.queue.complete(
+                job.job_id,
+                worker_id="worker-b",
+                now="2026-08-22T10:00:30+00:00",
+            )
         self.assertEqual(
-            self.queue.complete(job.job_id, worker_id="worker-a").state,
+            self.queue.complete(
+                job.job_id,
+                worker_id="worker-a",
+                now="2026-08-22T10:00:30+00:00",
+            ).state,
             "SUCCEEDED",
         )
+
+    def test_expired_worker_cannot_complete_before_recovery_marks_lease(self):
+        self._enqueue()
+        job = self.queue.claim(
+            worker_id="worker-a",
+            now="2026-08-22T10:00:00+00:00",
+            lease_seconds=60,
+        )
+        with self.assertRaises(RuntimeError):
+            self.queue.complete(
+                job.job_id,
+                worker_id="worker-a",
+                now="2026-08-22T10:01:00+00:00",
+            )
+
+    def test_expired_worker_cannot_record_failure(self):
+        self._enqueue()
+        job = self.queue.claim(
+            worker_id="worker-a",
+            now="2026-08-22T10:00:00+00:00",
+            lease_seconds=60,
+        )
+        with self.assertRaises(RuntimeError):
+            self.queue.fail(
+                job.job_id,
+                worker_id="worker-a",
+                now="2026-08-22T10:01:00+00:00",
+                retry_safe=True,
+                error="late worker result",
+            )
 
     def test_ambiguous_failure_never_auto_retries(self):
         self._enqueue()
@@ -51,6 +94,7 @@ class JobQueueTests(unittest.TestCase):
         unknown = self.queue.fail(
             job.job_id,
             worker_id="worker-a",
+            now="2026-08-22T10:00:30+00:00",
             retry_safe=False,
             error="ambiguous timeout",
         )
@@ -101,6 +145,7 @@ class JobQueueTests(unittest.TestCase):
         dead = self.queue.fail(
             job.job_id,
             worker_id="worker-a",
+            now="2026-08-22T10:00:30+00:00",
             retry_safe=True,
             error="safe compute failure",
         )

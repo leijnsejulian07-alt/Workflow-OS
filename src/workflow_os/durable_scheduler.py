@@ -37,7 +37,7 @@ def _directive(candidate: dict[str, Any]) -> dict[str, Any]:
     return directive
 
 
-def _batch_fingerprint(opportunity_id: str, directive: dict[str, Any]) -> str:
+def _batch_fingerprint(opportunity_id: str, directive: dict[str, Any], snapshot_sha256: str | None = None) -> str:
     economics = {
         "opportunity_id": opportunity_id,
         "action": directive.get("action"),
@@ -46,6 +46,7 @@ def _batch_fingerprint(opportunity_id: str, directive: dict[str, Any]) -> str:
         "reconciled_cost_eur": directive.get("reconciled_cost_eur"),
         "realized_profit_eur": directive.get("realized_profit_eur"),
         "policy_version": directive.get("policy_version"),
+        "opportunity_snapshot_sha256": snapshot_sha256,
     }
     encoded = json.dumps(economics, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -71,7 +72,6 @@ def enqueue_controlled_candidates(
         if candidate.get("decision") != "ACCEPT" or candidate.get("eligible_for_queue") is not True:
             raise RuntimeError("controlled candidate is not upstream eligible")
         directive = _directive(candidate)
-        batch = _batch_fingerprint(opportunity_id, directive)
         snapshot = candidate.get("opportunity_snapshot")
         snapshot_sha = candidate.get("opportunity_snapshot_sha256")
         if (snapshot is None) != (snapshot_sha is None):
@@ -85,6 +85,7 @@ def enqueue_controlled_candidates(
             expected = hashlib.sha256(encoded).hexdigest()
             if snapshot_sha != expected:
                 raise RuntimeError("opportunity snapshot digest mismatch")
+        batch = _batch_fingerprint(opportunity_id, directive, snapshot_sha)
         for slot in range(1, directive["max_new_jobs"] + 1):
             payload = {
                 "opportunity_id": opportunity_id,

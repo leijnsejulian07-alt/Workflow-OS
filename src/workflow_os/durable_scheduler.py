@@ -5,6 +5,7 @@ from typing import Any
 from .experiment_ledger import ExperimentLedger
 from .job_queue import JobQueue, JobRecord
 from .ledger import OpportunityLedger
+from .opportunity_snapshot import snapshot_opportunity
 from .reconciliation import RevenueReconciliationLedger
 from .scaling_control import revenue_controlled_queue_candidates
 
@@ -36,7 +37,7 @@ def _directive(candidate: dict[str, Any]) -> dict[str, Any]:
     return directive
 
 
-def _batch_fingerprint(opportunity_id: str, directive: dict[str, Any]) -> str:
+def _batch_fingerprint(opportunity_id: str, directive: dict[str, Any], snapshot_sha256: str | None = None) -> str:
     economics = {
         "opportunity_id": opportunity_id,
         "action": directive.get("action"),
@@ -45,6 +46,7 @@ def _batch_fingerprint(opportunity_id: str, directive: dict[str, Any]) -> str:
         "reconciled_cost_eur": directive.get("reconciled_cost_eur"),
         "realized_profit_eur": directive.get("realized_profit_eur"),
         "policy_version": directive.get("policy_version"),
+        "opportunity_snapshot_sha256": snapshot_sha256,
     }
     encoded = json.dumps(economics, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -70,7 +72,20 @@ def enqueue_controlled_candidates(
         if candidate.get("decision") != "ACCEPT" or candidate.get("eligible_for_queue") is not True:
             raise RuntimeError("controlled candidate is not upstream eligible")
         directive = _directive(candidate)
-        batch = _batch_fingerprint(opportunity_id, directive)
+        snapshot = candidate.get("opportunity_snapshot")
+        snapshot_sha = candidate.get("opportunity_snapshot_sha256")
+        if (snapshot is None) != (snapshot_sha is None):
+            raise RuntimeError("opportunity snapshot and digest must be provided together")
+        if snapshot is not None:
+            if not isinstance(snapshot, dict):
+                raise RuntimeError("opportunity snapshot must be an object")
+            if snapshot.get("opportunity_id") != opportunity_id:
+                raise RuntimeError("opportunity snapshot identity mismatch")
+            encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+            expected = hashlib.sha256(encoded).hexdigest()
+            if snapshot_sha != expected:
+                raise RuntimeError("opportunity snapshot digest mismatch")
+        batch = _batch_fingerprint(opportunity_id, directive, snapshot_sha)
         for slot in range(1, directive["max_new_jobs"] + 1):
             payload = {
                 "opportunity_id": opportunity_id,
@@ -78,6 +93,9 @@ def enqueue_controlled_candidates(
                 "batch_fingerprint": batch,
                 "batch_slot": slot,
             }
+            if snapshot is not None:
+                payload["opportunity_snapshot"] = snapshot
+                payload["opportunity_snapshot_sha256"] = snapshot_sha
             queued.append(jobs.enqueue(
                 idempotency_key=f"revenue:{batch}:{slot}",
                 opportunity_id=opportunity_id,
@@ -105,7 +123,7 @@ def schedule_revenue_controlled_jobs(
     min_samples_to_scale: int = 3,
     min_realized_profit_to_scale_eur: float = 25.0,
 ) -> list[JobRecord]:
-    """Evaluate upstream/revenue policy and durably enqueue only allowed work."""
+    """Evaluate policy, snapshot normalized opportunities, then durably enqueue work."""
     candidates = revenue_controlled_queue_candidates(
         opportunities,
         reconciliation,
@@ -118,9 +136,19 @@ def schedule_revenue_controlled_jobs(
         min_samples_to_scale=min_samples_to_scale,
         min_realized_profit_to_scale_eur=min_realized_profit_to_scale_eur,
     )
+    materialized: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            raise RuntimeError("controlled candidate must be an object")
+        opportunity_id = _id(candidate.get("opportunity_id"), "opportunity_id", 200)
+        snapshot = snapshot_opportunity(opportunities, opportunity_id)
+        enriched = dict(candidate)
+        enriched["opportunity_snapshot"] = snapshot.payload
+        enriched["opportunity_snapshot_sha256"] = snapshot.sha256
+        materialized.append(enriched)
     return enqueue_controlled_candidates(
         jobs,
-        candidates,
+        materialized,
         scheduled_at=scheduled_at,
         job_type=job_type,
         max_attempts=max_attempts,

@@ -63,7 +63,7 @@ class JobQueue:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE"); row=db.execute("SELECT * FROM jobs WHERE idempotency_key=?",(key,)).fetchone()
             if row:
-                if row["request_fingerprint"]!=fp: raise ValueError("idempotency key is already bound to a different job")
+                if row["request_fingerprint"]!=fp or row["max_attempts"]!=max_attempts: raise ValueError("idempotency key is already bound to a different job")
                 return self._row(row)
             db.execute("INSERT INTO jobs(idempotency_key,opportunity_id,job_type,request_json,request_fingerprint,state,max_attempts,available_at) VALUES(?,?,?,?,?,'READY',?,?)",(key,op,kind,p,fp,max_attempts,available))
             return self._row(db.execute("SELECT * FROM jobs WHERE idempotency_key=?",(key,)).fetchone())
@@ -77,21 +77,21 @@ class JobQueue:
             if not row: return None
             db.execute("UPDATE jobs SET state='LEASED',attempt_count=attempt_count+1,worker_id=?,lease_expires_at=?,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE job_id=?",(worker,until,row['job_id']))
             return self._row(db.execute("SELECT * FROM jobs WHERE job_id=?",(row['job_id'],)).fetchone())
-    def complete(self,job_id:int,*,worker_id:object)->JobRecord:
-        worker=_id(worker_id,"worker_id",200)
+    def complete(self,job_id:int,*,worker_id:object,now:object)->JobRecord:
+        worker=_id(worker_id,"worker_id",200); now_s=_ts(now,"now")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE"); row=self._req(db,job_id)
             if row['state']=='SUCCEEDED': return self._row(row)
-            self._owned(row,worker)
+            self._owned_live(row,worker,now_s)
             db.execute("UPDATE jobs SET state='SUCCEEDED',worker_id=NULL,lease_expires_at=NULL,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE job_id=?",(job_id,))
             return self._row(self._req(db,job_id))
-    def fail(self,job_id:int,*,worker_id:object,retry_safe:bool,error:object,retry_at:object|None=None)->JobRecord:
-        worker=_id(worker_id,"worker_id",200); msg=_id(error,"error",1000)
+    def fail(self,job_id:int,*,worker_id:object,now:object,retry_safe:bool,error:object,retry_at:object|None=None)->JobRecord:
+        worker=_id(worker_id,"worker_id",200); now_s=_ts(now,"now"); msg=_id(error,"error",1000)
         if not isinstance(retry_safe,bool): raise ValueError("retry_safe must be a boolean")
         with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE"); row=self._req(db,job_id); self._owned(row,worker)
+            db.execute("BEGIN IMMEDIATE"); row=self._req(db,job_id); self._owned_live(row,worker,now_s)
             if retry_safe and row['attempt_count']<row['max_attempts']:
-                state='FAILED_RETRYABLE'; available=_ts(retry_at,"retry_at") if retry_at is not None else row['available_at']
+                state='FAILED_RETRYABLE'; available=_ts(retry_at,"retry_at") if retry_at is not None else now_s
             elif retry_safe: state='DEAD'; available=row['available_at']
             else: state='UNKNOWN'; available=row['available_at']
             db.execute("UPDATE jobs SET state=?,available_at=?,worker_id=NULL,lease_expires_at=NULL,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE job_id=?",(state,available,msg,job_id))
@@ -118,9 +118,10 @@ class JobQueue:
             db.execute("UPDATE jobs SET state=?,available_at=?,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE job_id=?",(state,available,job_id))
             return self._row(self._req(db,job_id))
     @staticmethod
-    def _owned(row,worker):
+    def _owned_live(row,worker,now_s):
         if row['state']!='LEASED': raise RuntimeError("job is not leased")
         if row['worker_id']!=worker: raise RuntimeError("job lease belongs to another worker")
+        if not row['lease_expires_at'] or row['lease_expires_at']<=now_s: raise RuntimeError("job lease has expired")
     @staticmethod
     def _req(db,job_id):
         if not isinstance(job_id,int) or isinstance(job_id,bool) or job_id<1: raise ValueError("job_id must be a positive integer")

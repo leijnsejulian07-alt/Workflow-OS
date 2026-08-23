@@ -46,7 +46,10 @@ def _digest(value: object) -> str:
     return cleaned
 
 
-def _load_receipt_reference(audit_ledger: AuditRevenueLedger, receipt_id: str) -> tuple[str, str]:
+def _load_receipt_identity(
+    audit_ledger: AuditRevenueLedger,
+    receipt_id: str,
+) -> tuple[str, str, str]:
     path = Path(audit_ledger.path)
     if not path.exists() or not path.is_file():
         raise ValueError("audit revenue ledger is unavailable")
@@ -56,7 +59,8 @@ def _load_receipt_reference(audit_ledger: AuditRevenueLedger, receipt_id: str) -
             db.execute("PRAGMA query_only = ON")
             db.execute("PRAGMA busy_timeout = 5000")
             row = db.execute(
-                "SELECT source_platform, external_reference FROM cash_receipts WHERE receipt_id=?",
+                """SELECT source_platform, external_reference, received_at
+                   FROM cash_receipts WHERE receipt_id=?""",
                 (receipt_id,),
             ).fetchone()
     except sqlite3.Error as exc:
@@ -65,7 +69,8 @@ def _load_receipt_reference(audit_ledger: AuditRevenueLedger, receipt_id: str) -
         raise ValueError("cash receipt does not exist")
     source_platform = _bounded_text(row["source_platform"], "source_platform", max_len=80)
     external_reference = _bounded_text(row["external_reference"], "external_reference")
-    return source_platform, external_reference
+    received_at = _bounded_text(row["received_at"], "received_at")
+    return source_platform, external_reference, received_at
 
 
 def attribute_cash_from_publication_evidence(
@@ -101,7 +106,9 @@ def attribute_cash_from_publication_evidence(
     if provenance is None:
         raise ValueError("publication is not proven provenance")
 
-    source_platform, receipt_external_reference = _load_receipt_reference(audit_ledger, receipt_id)
+    source_platform, receipt_external_reference, received_at = _load_receipt_identity(
+        audit_ledger, receipt_id
+    )
     if receipt_external_reference != payout_event_id:
         raise ValueError("cash receipt external reference does not match payout event")
 
@@ -121,6 +128,7 @@ def attribute_cash_from_publication_evidence(
             "evidence_sha256": evidence_sha256,
         },
         subject_id=provenance.opportunity_id,
+        occurred_at=received_at,
     )
 
     audit_ledger.attribute_cash(receipt_id, provenance.opportunity_id)

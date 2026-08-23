@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from workflow_os.adapters.whop_bounty_http_transport import (
-    WhopBountyHttpTransport,
-    WhopBountyTransportError,
-)
+from workflow_os.adapters.whop_bounty_http_transport import WhopBountyHttpTransport
 from workflow_os.adapters.whop_bounty_submission import (
     WHOP_BOUNTY_SUBMISSION_URL,
     WhopBountyDeliverable,
@@ -107,8 +104,10 @@ def execute_reserved_whop_bounty_submission(
 
     Credential resolution and request construction happen before the ledger enters
     EXECUTING so local validation/secret-provider failures cannot create an
-    ambiguous external state. Once EXECUTING begins, every exception is treated as
-    UNKNOWN because the transport may have dispatched the request. Only a
+    ambiguous external state. The complete non-secret payload is rebound against
+    the persisted reservation immediately before execution, preventing post-
+    reservation identity drift. Once EXECUTING begins, every exception is treated
+    as UNKNOWN because the transport may have dispatched the request. Only a
     confirmed 201/submitted response may mark the side effect SUCCEEDED.
     """
 
@@ -130,6 +129,22 @@ def execute_reserved_whop_bounty_submission(
         raise RuntimeError("Whop bounty reservation is bound to the wrong side effect")
     if current.request_fingerprint != reservation.side_effect.request_fingerprint:
         raise RuntimeError("Whop bounty reservation fingerprint drifted")
+
+    rebound_payload = _validated_payload(
+        bounty_id=reservation.bounty_id,
+        deliverable=reservation.deliverable,
+        evidence=reservation.evidence,
+        idempotency_key=reservation.idempotency_key,
+    )
+    rebound = ledger.reserve(
+        idempotency_key=reservation.idempotency_key,
+        action=_ACTION,
+        target=WHOP_BOUNTY_SUBMISSION_URL,
+        payload=rebound_payload,
+        max_attempts=current.max_attempts,
+    )
+    if rebound.request_fingerprint != current.request_fingerprint:
+        raise RuntimeError("Whop bounty reservation payload drifted")
 
     lease = lease_credential(credential_provider, credential_ref)
     request = build_workforce_submission_request(

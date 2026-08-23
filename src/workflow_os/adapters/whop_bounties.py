@@ -1,9 +1,10 @@
 """Fail-closed Whop Bounties discovery adapter.
 
 This module normalizes bounded responses from Whop's documented Bounties API.
-It performs no network access and grants no submission authority. Until an
-official, reviewed machine-submission surface is verified, every normalized
-record remains discovery-only and zero-touch execution is disabled.
+It performs no network access and grants no per-opportunity submission authority.
+The official machine-submission surface is recorded only for workforce bounties;
+zero-touch execution remains disabled here until the durable worker path binds the
+exact discovered opportunity to its submission side effect.
 """
 from __future__ import annotations
 
@@ -56,11 +57,12 @@ def normalize_whop_bounty(
     raw_evidence_sha256: str,
     api_host: str = "api.whop.com",
 ) -> DiscoveryRecord:
-    """Normalize one official Whop bounty response without inventing eligibility.
+    """Normalize one official Whop bounty without inventing execution authority.
 
-    `machine_submission_verified` and `zero_touch_execution_enabled` are forced
-    false in v1. A future submission adapter must be reviewed separately before
-    either capability can become true.
+    Whop's reviewed worker submission contract applies only to ``workforce``
+    bounties. Discovery may record that platform capability, but this adapter does
+    not decide rights, worker identity, deliverable validity, account authority or
+    durable execution readiness. Those remain separate fail-closed gates.
     """
     if not isinstance(payload, Mapping):
         raise ValueError("bounty payload must be a mapping")
@@ -95,6 +97,12 @@ def normalize_whop_bounty(
     created_at = _required_string(payload, "created_at", max_len=128)
     updated_at = _required_string(payload, "updated_at", max_len=128)
 
+    machine_submission_verified = bounty_type == "workforce"
+    if machine_submission_verified:
+        execution_block_reason = "durable_opportunity_submission_binding_not_verified"
+    else:
+        execution_block_reason = "official_worker_submission_requires_workforce_bounty"
+
     normalized_payload: dict[str, object] = {
         "campaign_id": bounty_id,
         "title": title,
@@ -110,8 +118,8 @@ def normalize_whop_bounty(
         "vote_threshold": vote_threshold,
         "created_at": created_at,
         "updated_at": updated_at,
-        "machine_submission_verified": False,
+        "machine_submission_verified": machine_submission_verified,
         "zero_touch_execution_enabled": False,
-        "execution_block_reason": "official_machine_submission_not_verified",
+        "execution_block_reason": execution_block_reason,
     }
     return normalize_reward_record(POLICY, normalized_payload)

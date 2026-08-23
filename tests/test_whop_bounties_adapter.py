@@ -27,7 +27,7 @@ class WhopBountiesAdapterTests(unittest.TestCase):
             **kwargs,
         )
 
-    def test_normalizes_official_bounty_but_keeps_execution_disabled(self):
+    def test_records_verified_workforce_submission_surface_but_keeps_execution_gated(self):
         record = self._normalize()
         self.assertEqual(record.source_platform, "whop_bounties")
         self.assertEqual(record.campaign_id, "bnty_example123")
@@ -35,11 +35,22 @@ class WhopBountiesAdapterTests(unittest.TestCase):
             record.canonical_url,
             "https://api.whop.com/api/v1/bounties/bnty_example123",
         )
+        self.assertTrue(record.fields["machine_submission_verified"])
+        self.assertFalse(record.fields["zero_touch_execution_enabled"])
+        self.assertEqual(
+            record.fields["execution_block_reason"],
+            "durable_opportunity_submission_binding_not_verified",
+        )
+
+    def test_non_workforce_bounty_does_not_inherit_worker_submission_capability(self):
+        payload = self._payload()
+        payload["bounty_type"] = "classic"
+        record = self._normalize(payload)
         self.assertFalse(record.fields["machine_submission_verified"])
         self.assertFalse(record.fields["zero_touch_execution_enabled"])
         self.assertEqual(
             record.fields["execution_block_reason"],
-            "official_machine_submission_not_verified",
+            "official_worker_submission_requires_workforce_bounty",
         )
 
     def test_accepts_documented_sandbox_host(self):
@@ -78,11 +89,16 @@ class WhopBountiesAdapterTests(unittest.TestCase):
 
     def test_remote_payload_cannot_enable_zero_touch_submission(self):
         payload = self._payload()
-        payload["machine_submission_verified"] = True
+        payload["machine_submission_verified"] = False
         payload["zero_touch_execution_enabled"] = True
+        payload["execution_block_reason"] = "remote_override"
         record = self._normalize(payload)
-        self.assertFalse(record.fields["machine_submission_verified"])
+        self.assertTrue(record.fields["machine_submission_verified"])
         self.assertFalse(record.fields["zero_touch_execution_enabled"])
+        self.assertEqual(
+            record.fields["execution_block_reason"],
+            "durable_opportunity_submission_binding_not_verified",
+        )
 
 
 if __name__ == "__main__":

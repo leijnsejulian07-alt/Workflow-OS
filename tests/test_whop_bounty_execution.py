@@ -133,6 +133,32 @@ class WhopBountyExecutionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._reserve(deliverable=changed)
 
+    def test_post_reservation_deliverable_mutation_is_rejected_before_network(self):
+        reservation = self._reserve()
+        mutated = WhopBountyDeliverable(
+            deliverable_type="content_url",
+            urls=("https://example.com/work/mutated",),
+            caption="Verified work",
+        )
+        object.__setattr__(reservation, "deliverable", mutated)
+        transport, opener = self._transport()
+
+        with self.assertRaises(ValueError):
+            execute_reserved_whop_bounty_submission(
+                reservation,
+                ledger=self.ledger,
+                credential_ref=CredentialRef(
+                    platform="whop", account_id="worker-1", secret_name="user_token"
+                ),
+                credential_provider=_CredentialProvider(),
+                transport=transport,
+            )
+
+        record = self.ledger.get(reservation.idempotency_key)
+        self.assertEqual(record.state, "RESERVED")
+        self.assertEqual(record.attempt_count, 0)
+        self.assertEqual(opener.calls, 0)
+
     def test_network_error_after_execution_start_becomes_unknown(self):
         reservation = self._reserve()
         transport, _ = self._transport(error=URLError("connection lost"))

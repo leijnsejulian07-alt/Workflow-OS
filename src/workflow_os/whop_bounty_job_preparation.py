@@ -83,6 +83,7 @@ def prepare_durable_whop_bounty_submission(
     verified_job: VerifiedLeasedOpportunityJob,
     deliverable: WhopBountyDeliverable,
     *,
+    credential_authority_verified: bool,
     deliverable_verified: bool,
     ledger: SideEffectLedger,
     max_attempts: int = 3,
@@ -90,14 +91,18 @@ def prepare_durable_whop_bounty_submission(
     """Reserve exactly one Whop workforce submission for a verified durable job.
 
     Opportunity-owned rights/account/worker/campaign evidence comes only from the
-    immutable verified job snapshot. The caller may contribute only the final
-    deliverable plus an explicit verification result. A deterministic job-bound
-    idempotency key ensures that a replay is stable; changing the deliverable for
-    the same job conflicts in SideEffectLedger before any network I/O.
+    immutable verified job snapshot. Credential authority and final deliverable
+    verification remain separate explicit Workflow OS-owned evidence. A deterministic
+    job-bound idempotency key ensures stable replay; changing the deliverable for the
+    same durable job conflicts in SideEffectLedger before any network I/O.
     """
 
     if not isinstance(deliverable, WhopBountyDeliverable):
         raise TypeError("deliverable must be WhopBountyDeliverable")
+    if not isinstance(credential_authority_verified, bool):
+        raise TypeError("credential_authority_verified must be a boolean")
+    if credential_authority_verified is not True:
+        raise ValueError("Whop user credential authority is not verified")
     if not isinstance(deliverable_verified, bool):
         raise TypeError("deliverable_verified must be a boolean")
     if deliverable_verified is not True:

@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .sqlite_lifecycle import managed_connection
+
 _ALLOWED_STATES={"READY","LEASED","SUCCEEDED","FAILED_RETRYABLE","UNKNOWN","DEAD"}
 _MAX_PAYLOAD_BYTES=64*1024
 
@@ -38,7 +40,7 @@ class JobQueue:
     def _connect(self):
         db=sqlite3.connect(self.path,timeout=5.0); db.row_factory=sqlite3.Row; db.execute("PRAGMA busy_timeout=5000"); return db
     def _init_schema(self):
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.executescript("""
             CREATE TABLE IF NOT EXISTS jobs(
               job_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,7 +62,7 @@ class JobQueue:
         key=_id(idempotency_key,"idempotency_key",200); op=_id(opportunity_id,"opportunity_id",200); kind=_id(job_type,"job_type",100)
         if not isinstance(max_attempts,int) or isinstance(max_attempts,bool) or not 1<=max_attempts<=10: raise ValueError("max_attempts must be between 1 and 10")
         available=_ts(available_at,"available_at"); p=_payload(payload); fp=hashlib.sha256(f"{kind}\n{op}\n{p}".encode()).hexdigest()
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE"); row=db.execute("SELECT * FROM jobs WHERE idempotency_key=?",(key,)).fetchone()
             if row:
                 if row["request_fingerprint"]!=fp or row["max_attempts"]!=max_attempts: raise ValueError("idempotency key is already bound to a different job")
@@ -71,7 +73,7 @@ class JobQueue:
         worker=_id(worker_id,"worker_id",200); now_s=_ts(now,"now")
         if not isinstance(lease_seconds,int) or isinstance(lease_seconds,bool) or not 30<=lease_seconds<=3600: raise ValueError("lease_seconds must be between 30 and 3600")
         until=(datetime.fromisoformat(now_s)+timedelta(seconds=lease_seconds)).isoformat()
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row=db.execute("SELECT * FROM jobs WHERE state IN ('READY','FAILED_RETRYABLE') AND available_at<=? AND attempt_count<max_attempts ORDER BY available_at,job_id LIMIT 1",(now_s,)).fetchone()
             if not row: return None
@@ -80,7 +82,7 @@ class JobQueue:
     def read_leased_payload(self,job_id:int,*,worker_id:object,now:object)->Any:
         """Return a fresh JSON-decoded payload only to the current live lease owner."""
         worker=_id(worker_id,"worker_id",200); now_s=_ts(now,"now")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             row=self._req(db,job_id); self._owned_live(row,worker,now_s)
             try: payload=json.loads(row['request_json'])
             except (TypeError,json.JSONDecodeError) as exc: raise RuntimeError("persisted job payload is invalid JSON") from exc
@@ -90,7 +92,7 @@ class JobQueue:
             return payload
     def complete(self,job_id:int,*,worker_id:object,now:object)->JobRecord:
         worker=_id(worker_id,"worker_id",200); now_s=_ts(now,"now")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE"); row=self._req(db,job_id)
             if row['state']=='SUCCEEDED': return self._row(row)
             self._owned_live(row,worker,now_s)
@@ -99,7 +101,7 @@ class JobQueue:
     def fail(self,job_id:int,*,worker_id:object,now:object,retry_safe:bool,error:object,retry_at:object|None=None)->JobRecord:
         worker=_id(worker_id,"worker_id",200); now_s=_ts(now,"now"); msg=_id(error,"error",1000)
         if not isinstance(retry_safe,bool): raise ValueError("retry_safe must be a boolean")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE"); row=self._req(db,job_id); self._owned_live(row,worker,now_s)
             if retry_safe and row['attempt_count']<row['max_attempts']:
                 state='FAILED_RETRYABLE'; available=_ts(retry_at,"retry_at") if retry_at is not None else now_s
@@ -110,7 +112,7 @@ class JobQueue:
     def expire_lease(self,job_id:int,*,now:object,definitely_not_applied:bool,retry_at:object|None=None)->JobRecord:
         if not isinstance(definitely_not_applied,bool): raise ValueError("definitely_not_applied must be a boolean")
         now_s=_ts(now,"now")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE"); row=self._req(db,job_id)
             if row['state']!='LEASED': raise RuntimeError("only LEASED jobs can expire")
             if not row['lease_expires_at'] or row['lease_expires_at']>now_s: raise RuntimeError("job lease has not expired")
@@ -122,7 +124,7 @@ class JobQueue:
             return self._row(self._req(db,job_id))
     def reconcile_unknown_not_applied(self,job_id:int,*,retry_at:object)->JobRecord:
         available=_ts(retry_at,"retry_at")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE"); row=self._req(db,job_id)
             if row['state']!='UNKNOWN': raise RuntimeError("only UNKNOWN jobs require not-applied reconciliation")
             state='FAILED_RETRYABLE' if row['attempt_count']<row['max_attempts'] else 'DEAD'

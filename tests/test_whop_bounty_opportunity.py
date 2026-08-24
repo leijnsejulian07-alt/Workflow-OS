@@ -47,6 +47,7 @@ class WhopBountyOpportunityTests(unittest.TestCase):
             worker_identity_verified=True,
             campaign_requirements_verified=True,
             deliverable_requirements_verified=True,
+            content_category="content_creation",
             usage_rights="Whop bounty terms authorize this deliverable submission.",
             compliance_risk="LOW",
             platform_risk="LOW",
@@ -83,6 +84,7 @@ class WhopBountyOpportunityTests(unittest.TestCase):
         self.assertEqual(decision.decision, "ACCEPT")
         self.assertTrue(decision.eligible_for_queue)
         self.assertEqual(normalized["campaign_id"], "bnty_example123")
+        self.assertEqual(normalized["category"], "content_creation")
         self.assertEqual(normalized["rights_verification_state"], "VERIFIED")
         self.assertTrue(normalized["zero_touch_execution_enabled"])
         self.assertAlmostEqual(normalized["expected_collectible_revenue"], 72.0)
@@ -123,6 +125,26 @@ class WhopBountyOpportunityTests(unittest.TestCase):
         ):
             with self.subTest(evidence=evidence), self.assertRaises(ValueError):
                 build_whop_workforce_opportunity(record, evidence)
+
+    def test_remote_discovery_cannot_override_trusted_category(self):
+        raw = build_whop_workforce_opportunity(
+            self._record(category="fake_engagement"),
+            self._evidence(content_category="content_creation"),
+        )
+        self.assertEqual(raw["category"], "content_creation")
+
+    def test_rejects_centrally_prohibited_categories_before_admission(self):
+        for category in (
+            "fake_engagement",
+            "unsafe_financial_claims",
+            "unsafe_medical_claims",
+            "spam",
+        ):
+            with self.subTest(category=category), self.assertRaises(ValueError):
+                build_whop_workforce_opportunity(
+                    self._record(),
+                    self._evidence(content_category=category),
+                )
 
     def test_rejects_economic_claim_above_verified_cap_or_budget(self):
         with self.assertRaises(ValueError):

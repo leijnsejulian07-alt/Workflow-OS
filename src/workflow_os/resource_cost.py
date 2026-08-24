@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
 from .reconciliation import ReconciledEvent, RevenueReconciliationLedger
+from .sqlite_lifecycle import managed_connection
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -39,7 +40,7 @@ class ResourceCostLedger:
         return db
 
     def _init_schema(self) -> None:
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS resource_costs (
@@ -126,7 +127,7 @@ class ResourceCostLedger:
             self._digest(evidence_sha256),
             self._identifier(external_reference, "external_reference"),
         )
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             opportunity = db.execute(
                 "SELECT source_platform FROM opportunities WHERE opportunity_id=?",
@@ -176,7 +177,7 @@ class ResourceCostLedger:
 
     def load_cost(self, cost_id: object) -> CostEvidence:
         cost = self._identifier(cost_id, "cost_id")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             row = db.execute(
                 """SELECT c.*, o.source_platform AS opportunity_platform
                 FROM resource_costs c

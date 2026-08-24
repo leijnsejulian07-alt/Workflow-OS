@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .sqlite_lifecycle import managed_connection
+
 SCHEMA_VERSION = 1
 
 
@@ -30,7 +32,7 @@ class ExperimentLedger:
         return db
 
     def _init_schema(self) -> None:
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS experiment_meta (
@@ -84,7 +86,7 @@ class ExperimentLedger:
         key = self._identifier(experiment_key, "experiment_key")
         timestamp = self._timestamp(reserved_at)
 
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
                 "SELECT * FROM experiment_reservations WHERE opportunity_id=?",
@@ -112,7 +114,7 @@ class ExperimentLedger:
 
     def mark_consumed(self, opportunity_id: object) -> ExperimentReservation:
         opportunity = self._identifier(opportunity_id, "opportunity_id")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT * FROM experiment_reservations WHERE opportunity_id=?",
@@ -133,7 +135,7 @@ class ExperimentLedger:
 
     def get(self, opportunity_id: object) -> ExperimentReservation | None:
         opportunity = self._identifier(opportunity_id, "opportunity_id")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             row = db.execute(
                 "SELECT * FROM experiment_reservations WHERE opportunity_id=?",
                 (opportunity,),

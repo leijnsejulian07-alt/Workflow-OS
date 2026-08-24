@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .sqlite_lifecycle import managed_connection
+
 _ALLOWED_STATES = {"RESERVED", "EXECUTING", "SUCCEEDED", "FAILED_RETRYABLE", "UNKNOWN"}
 _MAX_PAYLOAD_BYTES = 64 * 1024
 
@@ -54,7 +56,7 @@ class SideEffectLedger:
         return db
 
     def _init_schema(self) -> None:
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS side_effects (
@@ -90,7 +92,7 @@ class SideEffectLedger:
             raise ValueError("max_attempts must be between 1 and 10")
         request_json = _canonical_json(payload)
         fingerprint = _fingerprint(action, target, request_json)
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM side_effects WHERE idempotency_key = ?", (key,)).fetchone()
             if row:
@@ -101,7 +103,7 @@ class SideEffectLedger:
             return self._row(db.execute("SELECT * FROM side_effects WHERE idempotency_key = ?", (key,)).fetchone())
 
     def begin_attempt(self, idempotency_key: str) -> SideEffectRecord:
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row = self._require(db, idempotency_key)
             if row["state"] not in {"RESERVED", "FAILED_RETRYABLE"}:
@@ -117,7 +119,7 @@ class SideEffectLedger:
             reference = None
         if reference is not None and len(reference) > 500:
             raise ValueError("external_reference must be at most 500 characters")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row = self._require(db, idempotency_key)
             if row["state"] == "SUCCEEDED":
@@ -137,7 +139,7 @@ class SideEffectLedger:
             return self._row(self._require(db, idempotency_key))
 
     def mark_failed(self, idempotency_key: str, *, definitely_not_applied: bool) -> SideEffectRecord:
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row = self._require(db, idempotency_key)
             if row["state"] != "EXECUTING":
@@ -147,7 +149,7 @@ class SideEffectLedger:
             return self._row(self._require(db, idempotency_key))
 
     def reconcile_not_applied(self, idempotency_key: str) -> SideEffectRecord:
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row = self._require(db, idempotency_key)
             if row["state"] != "UNKNOWN":
@@ -156,7 +158,7 @@ class SideEffectLedger:
             return self._row(self._require(db, idempotency_key))
 
     def get(self, idempotency_key: str) -> SideEffectRecord | None:
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             row = db.execute("SELECT * FROM side_effects WHERE idempotency_key=?", (idempotency_key,)).fetchone()
         return self._row(row) if row else None
 

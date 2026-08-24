@@ -2,8 +2,8 @@
 
 Discovery capability is not opportunity approval. This module only creates a raw
 Opportunity Manager payload when independent Workflow OS-owned rights, account,
-worker, deliverable and economic evidence is explicit and internally consistent.
-It performs no network access and no external side effects.
+worker, deliverable, category and economic evidence is explicit and internally
+consistent. It performs no network access and no external side effects.
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import math
 import re
 
 from .adapters.contracts import DiscoveryRecord
+from .opportunities import BLOCKED_CATEGORIES
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -31,6 +32,7 @@ class TrustedWhopWorkforceEvidence:
     worker_identity_verified: bool
     campaign_requirements_verified: bool
     deliverable_requirements_verified: bool
+    content_category: str
     usage_rights: str
     compliance_risk: str
     platform_risk: str
@@ -108,8 +110,10 @@ def build_whop_workforce_opportunity(
 ) -> dict[str, object]:
     """Create a raw Opportunity Manager payload from separately trusted evidence.
 
-    Platform discovery fields are never allowed to assert rights, account authority,
-    worker identity or economics. Those facts must arrive through ``evidence``.
+    Platform discovery fields are never allowed to assert category, rights, account
+    authority, worker identity or economics. Those facts must arrive through
+    ``evidence``. Prohibited categories are rejected here and are still rechecked by
+    the central Opportunity Manager policy downstream.
     """
     _verified_discovery(record)
     if not isinstance(evidence, TrustedWhopWorkforceEvidence):
@@ -126,6 +130,10 @@ def build_whop_workforce_opportunity(
         raise ValueError("Whop workforce opportunity evidence is incomplete")
     if not _SHA256_RE.fullmatch(evidence.evidence_sha256):
         raise ValueError("trusted opportunity evidence digest is malformed")
+
+    category = _text(evidence.content_category, "content_category", max_len=64).lower()
+    if category in BLOCKED_CATEGORIES:
+        raise ValueError("prohibited opportunity category")
 
     usage_rights = _text(evidence.usage_rights, "usage_rights")
     payout_formula = _text(evidence.payout_formula, "payout_formula")
@@ -193,7 +201,7 @@ def build_whop_workforce_opportunity(
         "source_platform": record.source_platform,
         "campaign_id": record.campaign_id,
         "title": record.title,
-        "category": "whop_workforce_bounty",
+        "category": category,
         "canonical_url": record.canonical_url,
         "source_evidence_sha256": record.raw_evidence_sha256,
         "opportunity_evidence_sha256": evidence.evidence_sha256,

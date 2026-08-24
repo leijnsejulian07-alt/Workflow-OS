@@ -55,18 +55,22 @@ class DurableWhopBountyPreparationTests(unittest.TestCase):
     def _deliverable(url="https://example.com/result/1"):
         return WhopBountyDeliverable(deliverable_type="content_url", urls=(url,))
 
+    def _prepare(self, job=None, deliverable=None, **kwargs):
+        return prepare_durable_whop_bounty_submission(
+            job or self._job(),
+            deliverable or self._deliverable(),
+            credential_authority_verified=kwargs.pop("credential_authority_verified", True),
+            deliverable_verified=kwargs.pop("deliverable_verified", True),
+            ledger=self.ledger,
+            **kwargs,
+        )
+
     def _count_effects(self):
         with sqlite3.connect(self.ledger.path) as db:
             return db.execute("SELECT COUNT(*) FROM side_effects").fetchone()[0]
 
     def test_prepares_one_job_bound_reservation(self):
-        prepared = prepare_durable_whop_bounty_submission(
-            self._job(),
-            self._deliverable(),
-            deliverable_verified=True,
-            ledger=self.ledger,
-        )
-
+        prepared = self._prepare()
         self.assertEqual(prepared.job_id, 7)
         self.assertEqual(prepared.opportunity_id, "opp-whop-1")
         self.assertEqual(prepared.reservation.bounty_id, "bnty_example123")
@@ -75,13 +79,8 @@ class DurableWhopBountyPreparationTests(unittest.TestCase):
         self.assertEqual(self._count_effects(), 1)
 
     def test_exact_replay_is_idempotent(self):
-        first = prepare_durable_whop_bounty_submission(
-            self._job(), self._deliverable(), deliverable_verified=True, ledger=self.ledger
-        )
-        second = prepare_durable_whop_bounty_submission(
-            self._job(), self._deliverable(), deliverable_verified=True, ledger=self.ledger
-        )
-
+        first = self._prepare()
+        second = self._prepare()
         self.assertEqual(first.reservation.idempotency_key, second.reservation.idempotency_key)
         self.assertEqual(
             first.reservation.side_effect.request_fingerprint,
@@ -90,23 +89,19 @@ class DurableWhopBountyPreparationTests(unittest.TestCase):
         self.assertEqual(self._count_effects(), 1)
 
     def test_same_durable_job_cannot_be_rebound_to_different_deliverable(self):
-        prepare_durable_whop_bounty_submission(
-            self._job(), self._deliverable(), deliverable_verified=True, ledger=self.ledger
-        )
+        self._prepare()
         with self.assertRaises(ValueError):
-            prepare_durable_whop_bounty_submission(
-                self._job(),
-                self._deliverable("https://example.com/result/2"),
-                deliverable_verified=True,
-                ledger=self.ledger,
-            )
+            self._prepare(deliverable=self._deliverable("https://example.com/result/2"))
         self.assertEqual(self._count_effects(), 1)
+
+    def test_credential_authority_is_separate_from_account_authorization(self):
+        with self.assertRaises(ValueError):
+            self._prepare(credential_authority_verified=False)
+        self.assertEqual(self._count_effects(), 0)
 
     def test_unverified_deliverable_stops_before_reservation(self):
         with self.assertRaises(ValueError):
-            prepare_durable_whop_bounty_submission(
-                self._job(), self._deliverable(), deliverable_verified=False, ledger=self.ledger
-            )
+            self._prepare(deliverable_verified=False)
         self.assertEqual(self._count_effects(), 0)
 
     def test_opportunity_owned_authority_must_be_verified(self):
@@ -122,12 +117,7 @@ class DurableWhopBountyPreparationTests(unittest.TestCase):
         for field, value in fields:
             with self.subTest(field=field):
                 with self.assertRaises(RuntimeError):
-                    prepare_durable_whop_bounty_submission(
-                        self._job(**{field: value}),
-                        self._deliverable(),
-                        deliverable_verified=True,
-                        ledger=self.ledger,
-                    )
+                    self._prepare(job=self._job(**{field: value}))
                 self.assertEqual(self._count_effects(), 0)
 
     def test_non_whop_and_non_workforce_jobs_fail_closed(self):
@@ -138,21 +128,16 @@ class DurableWhopBountyPreparationTests(unittest.TestCase):
         ):
             with self.subTest(overrides=overrides):
                 with self.assertRaises(RuntimeError):
-                    prepare_durable_whop_bounty_submission(
-                        self._job(**overrides),
-                        self._deliverable(),
-                        deliverable_verified=True,
-                        ledger=self.ledger,
-                    )
+                    self._prepare(job=self._job(**overrides))
                 self.assertEqual(self._count_effects(), 0)
 
     def test_invalid_deliverable_is_rejected_by_existing_submission_contract(self):
         with self.assertRaises(ValueError):
-            prepare_durable_whop_bounty_submission(
-                self._job(),
-                WhopBountyDeliverable(deliverable_type="content_url", urls=("http://unsafe.test/x",)),
-                deliverable_verified=True,
-                ledger=self.ledger,
+            self._prepare(
+                deliverable=WhopBountyDeliverable(
+                    deliverable_type="content_url",
+                    urls=("http://unsafe.test/x",),
+                )
             )
         self.assertEqual(self._count_effects(), 0)
 

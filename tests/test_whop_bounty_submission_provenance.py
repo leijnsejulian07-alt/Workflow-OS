@@ -123,19 +123,10 @@ class WhopBountySubmissionProvenanceTests(unittest.TestCase):
             max_attempts=3,
         )
         self.side_effects.begin_attempt(second.idempotency_key)
-        self.side_effects.mark_succeeded(second.idempotency_key, external_reference="btys_submission123")
-        second_binding = DurableWhopBountyBinding(
-            job_id=2,
-            job_request_fingerprint="2" * 64,
-            opportunity_id="opp-whop-1",
-            bounty_id="bnty_example123",
-            side_effect_idempotency_key=second.idempotency_key,
-            side_effect_request_fingerprint=second.request_fingerprint,
-        )
         with self.assertRaisesRegex(ValueError, "already bound to another side effect"):
-            self.provenance.record_confirmed_submission(
-                second_binding,
-                side_effect_ledger=self.side_effects,
+            self.side_effects.mark_succeeded(
+                second.idempotency_key,
+                external_reference="btys_submission123",
             )
 
     def test_submission_success_is_not_cash_evidence(self):

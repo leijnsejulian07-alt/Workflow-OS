@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
 from .performance import RealizedCashDecision, decide_from_realized_cash
+from .sqlite_lifecycle import managed_connection
 
 SCHEMA_VERSION = 1
 _ALLOWED_EVENT_TYPES = {
@@ -64,7 +65,7 @@ class RevenueReconciliationLedger:
         return db
 
     def _init_schema(self) -> None:
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS reconciliation_meta (
@@ -193,7 +194,7 @@ class RevenueReconciliationLedger:
             reference_external_event_id=reference,
         )
 
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
                 "SELECT * FROM reconciliation_events WHERE platform=? AND external_event_id=?",
@@ -255,7 +256,7 @@ class RevenueReconciliationLedger:
 
     def realized_summary(self, opportunity_id: object) -> RealizedSummary:
         opportunity = self._identifier(opportunity_id, "opportunity_id")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             row = db.execute(
                 """
                 SELECT

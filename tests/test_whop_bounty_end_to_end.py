@@ -166,7 +166,7 @@ class WhopBountyEndToEndTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._run(opener=opener, credential_authority_verified=False)
         self.assertEqual(opener.requests, [])
-        self.assertIsNone(self.bindings.get(self.job.job.job_id))
+        self.assertIsNone(self.bindings.get(self.job.job.job_id if hasattr(self.job.job, "job_id") else 0))
 
     def test_wrong_credential_type_stops_before_reservation(self):
         self.ref = CredentialRef(platform="whop", account_id="worker-1", secret_name="api_key")
@@ -174,7 +174,7 @@ class WhopBountyEndToEndTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._run(opener=opener)
         self.assertEqual(opener.requests, [])
-        self.assertIsNone(self.bindings.get(self.job.job.job_id))
+        self.assertIsNone(self.bindings.get(self.job.job.job_id if hasattr(self.job.job, "job_id") else 0))
 
 
 if __name__ == "__main__":

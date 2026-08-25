@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .sqlite_lifecycle import managed_connection
+
 MAX_EVENT_JSON_BYTES = 64 * 1024
 
 
@@ -50,7 +52,7 @@ class AuditRevenueLedger:
 
     def __init__(self, path: str | Path):
         self.path = str(path)
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS audit_events (
@@ -96,7 +98,7 @@ class AuditRevenueLedger:
             raise ValueError("event_id and event_type are required")
         occurred = _utc(occurred_at)
         event_json = _canonical(payload)
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute("SELECT event_hash, event_type, subject_id, occurred_at, event_json FROM audit_events WHERE event_id=?", (event_id,)).fetchone()
             if existing:
@@ -118,7 +120,7 @@ class AuditRevenueLedger:
             raise ValueError("cash amount outside allowed bounds")
         received = _utc(receipt.received_at)
         payload = _canonical({"receipt_id": receipt.receipt_id, "source_platform": receipt.source_platform, "amount_eur": amount, "received_at": received, "external_reference": receipt.external_reference})
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute("SELECT receipt_json FROM cash_receipts WHERE receipt_id=?", (receipt.receipt_id,)).fetchone()
             if existing:
@@ -141,7 +143,7 @@ class AuditRevenueLedger:
         if not receipt_id or not opportunity_id:
             raise ValueError("receipt_id and opportunity_id are required")
         attributed = _utc(attributed_at)
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             receipt = db.execute(
                 "SELECT source_platform FROM cash_receipts WHERE receipt_id=?",
@@ -182,7 +184,7 @@ class AuditRevenueLedger:
         opportunity_id = opportunity_id.strip()
         if not opportunity_id:
             raise ValueError("opportunity_id is required")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             row = db.execute(
                 """
                 SELECT COALESCE(SUM(r.amount_eur), 0) AS total
@@ -195,13 +197,13 @@ class AuditRevenueLedger:
         return float(row["total"])
 
     def gross_cash_eur(self) -> float:
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             row = db.execute("SELECT COALESCE(SUM(amount_eur), 0) AS total FROM cash_receipts").fetchone()
         return float(row["total"])
 
     def verify_audit_chain(self) -> bool:
         previous = "GENESIS"
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             rows = db.execute("SELECT event_id, occurred_at, event_type, subject_id, event_json, previous_hash, event_hash FROM audit_events ORDER BY id ASC").fetchall()
         for row in rows:
             if row["previous_hash"] != previous:

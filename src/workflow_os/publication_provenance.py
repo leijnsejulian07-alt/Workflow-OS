@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .durable_side_effect_binding import DurableSideEffectBinding
 from .side_effects import SideEffectLedger
+from .sqlite_lifecycle import managed_connection
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,7 @@ class PublicationProvenanceLedger:
 
     def __init__(self, path: str | Path):
         self.path = str(path)
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS publication_provenance (
@@ -81,7 +82,7 @@ class PublicationProvenanceLedger:
             publication_reference=current.external_reference.strip(),
         )
 
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT * FROM publication_provenance WHERE side_effect_idempotency_key=?",
@@ -121,7 +122,7 @@ class PublicationProvenanceLedger:
         reference = publication_reference.strip()
         if not target or not reference:
             raise ValueError("publication_target and publication_reference are required")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             row = db.execute(
                 """SELECT * FROM publication_provenance
                    WHERE publication_target=? AND publication_reference=?""",

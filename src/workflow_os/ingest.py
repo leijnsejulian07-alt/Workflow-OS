@@ -12,6 +12,7 @@ from typing import Any
 from .audit import AuditRevenueLedger
 from .ledger import OpportunityLedger
 from .opportunities import evaluate, normalize
+from .sqlite_lifecycle import managed_connection
 
 MAX_REQUEST_BYTES = 64 * 1024
 _IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
@@ -41,7 +42,7 @@ class LocalIngestService:
         return db
 
     def _init_schema(self) -> None:
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS ingest_requests (
@@ -70,7 +71,7 @@ class LocalIngestService:
             raise ValueError("request payload exceeds 64 KiB")
         digest = hashlib.sha256(encoded).hexdigest()
 
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM ingest_requests WHERE idempotency_key=?", (idempotency_key,)).fetchone()
             if row:
@@ -104,7 +105,7 @@ class LocalIngestService:
             subject_id=normalized["opportunity_id"],
             occurred_at=decision.evaluated_at,
         )
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             changed = db.execute(
                 "UPDATE ingest_requests SET state='SUCCEEDED',response_json=?,opportunity_id=?,updated_at=CURRENT_TIMESTAMP WHERE idempotency_key=? AND state='PROCESSING'",

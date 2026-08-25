@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .adapters.whop_webhook import VerifiedWhopWebhook
+from .sqlite_lifecycle import managed_connection
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _MAX_EVENT_JSON_BYTES = 256 * 1024
@@ -51,7 +52,7 @@ class WhopWebhookInbox:
 
     def __init__(self, path: str | Path):
         self.path = str(path)
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS whop_webhook_inbox (
@@ -91,7 +92,7 @@ class WhopWebhookInbox:
             event.payload_sha256,
             data_json,
         )
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
                 """SELECT event_type, occurred_at, account_id, payload_sha256, data_json, status
@@ -139,7 +140,7 @@ class WhopWebhookInbox:
     def pending(self, *, limit: int = 50) -> list[WhopInboxEvent]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
             raise ValueError("limit must be an integer between 1 and 200")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             rows = db.execute(
                 """SELECT webhook_id,event_type,occurred_at,account_id,payload_sha256,data_json,status
                    FROM whop_webhook_inbox WHERE status='PENDING'
@@ -172,7 +173,7 @@ class WhopWebhookInbox:
         if not _SHA256_RE.fullmatch(expected_payload_sha256):
             raise ValueError("expected_payload_sha256 is invalid")
         processed = _utc(processed_at)
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT payload_sha256,status FROM whop_webhook_inbox WHERE webhook_id=?",

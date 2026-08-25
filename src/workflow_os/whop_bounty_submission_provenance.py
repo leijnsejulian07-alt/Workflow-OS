@@ -8,6 +8,7 @@ from pathlib import Path
 from .adapters.whop_bounty_submission import WHOP_BOUNTY_SUBMISSION_URL
 from .durable_whop_bounty_binding import DurableWhopBountyBinding
 from .side_effects import SideEffectLedger
+from .sqlite_lifecycle import managed_connection
 
 _SUBMISSION_ID_RE = re.compile(r"^btys_[A-Za-z0-9_-]{3,200}$")
 
@@ -32,7 +33,7 @@ class WhopBountySubmissionProvenanceLedger:
 
     def __init__(self, path: str | Path):
         self.path = str(path)
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS whop_bounty_submission_provenance (
@@ -93,7 +94,7 @@ class WhopBountySubmissionProvenanceLedger:
             submission_reference=submission_reference,
         )
 
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT * FROM whop_bounty_submission_provenance WHERE side_effect_idempotency_key=?",
@@ -142,7 +143,7 @@ class WhopBountySubmissionProvenanceLedger:
             raise ValueError("submission_reference is malformed")
         if submission_target != WHOP_BOUNTY_SUBMISSION_URL:
             raise ValueError("submission_target must be the official Whop bounty endpoint")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             row = db.execute(
                 """SELECT * FROM whop_bounty_submission_provenance
                    WHERE submission_target=? AND submission_reference=?""",

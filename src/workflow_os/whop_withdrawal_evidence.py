@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from .sqlite_lifecycle import managed_connection
 from .whop_webhook_inbox import WhopInboxEvent
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -135,7 +136,7 @@ class WhopWithdrawalEvidenceLedger:
 
     def __init__(self, path: str | Path):
         self.path = str(path)
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS whop_withdrawal_evidence (
@@ -182,7 +183,7 @@ class WhopWithdrawalEvidenceLedger:
             sort_keys=True,
             separators=(",", ":"),
         )
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
                 "SELECT evidence_json FROM whop_withdrawal_evidence WHERE webhook_id=?",
@@ -214,7 +215,7 @@ class WhopWithdrawalEvidenceLedger:
 
     def events_for_withdrawal(self, withdrawal_id: str) -> list[WhopWithdrawalEvidence]:
         withdrawal_id = _bounded_id(withdrawal_id, "withdrawal_id")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             rows = db.execute(
                 """SELECT webhook_id,withdrawal_id,event_type,occurred_at,account_id,amount,
                           currency,status,trace_code,payload_sha256

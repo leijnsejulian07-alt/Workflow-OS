@@ -8,6 +8,7 @@ from .adapters.whop_bounty_execution import WhopBountyReservation
 from .adapters.whop_bounty_submission import WHOP_BOUNTY_SUBMISSION_URL
 from .durable_worker import VerifiedLeasedOpportunityJob
 from .side_effects import SideEffectLedger
+from .sqlite_lifecycle import managed_connection
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,7 @@ class DurableWhopBountyBindingLedger:
 
     def __init__(self, path: str | Path):
         self.path = str(path)
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute(
                 """CREATE TABLE IF NOT EXISTS durable_whop_bounty_bindings(
                     job_id INTEGER PRIMARY KEY,
@@ -98,7 +99,7 @@ class DurableWhopBountyBindingLedger:
             side_effect_idempotency_key=current.idempotency_key,
             side_effect_request_fingerprint=current.request_fingerprint,
         )
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT * FROM durable_whop_bounty_bindings WHERE job_id=?",
@@ -134,7 +135,7 @@ class DurableWhopBountyBindingLedger:
     def get(self, job_id: int) -> DurableWhopBountyBinding | None:
         if not isinstance(job_id, int) or isinstance(job_id, bool) or job_id < 1:
             raise ValueError("job_id must be a positive integer")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             row = db.execute(
                 "SELECT * FROM durable_whop_bounty_bindings WHERE job_id=?",
                 (job_id,),

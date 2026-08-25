@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .opportunities import OpportunityDecision
+from .sqlite_lifecycle import managed_connection
 
 SCHEMA_VERSION = 1
 
@@ -31,7 +32,7 @@ class OpportunityLedger:
         return connection
 
     def _init_schema(self) -> None:
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS workflow_os_meta (
@@ -80,7 +81,7 @@ class OpportunityLedger:
         decision_dict = decision.to_dict()
         decision_json = json.dumps(decision_dict, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 """
@@ -125,7 +126,7 @@ class OpportunityLedger:
             )
 
     def latest_decision(self, opportunity_id: str) -> dict[str, Any] | None:
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             row = db.execute(
                 """
                 SELECT decision_json FROM opportunity_decisions
@@ -139,7 +140,7 @@ class OpportunityLedger:
     def queue_candidates(self, limit: int = 50) -> list[dict[str, Any]]:
         if not 1 <= limit <= 500:
             raise ValueError("limit must be between 1 and 500")
-        with self._connect() as db:
+        with managed_connection(self._connect()) as db:
             rows = db.execute(
                 """
                 WITH ranked AS (

@@ -7,25 +7,25 @@ from .adapters.whop_bounty_http_transport import WhopBountyHttpTransport
 from .adapters.whop_bounty_submission import WhopBountyDeliverable
 from .credentials import CredentialProvider, CredentialRef
 from .durable_whop_bounty_binding import DurableWhopBountyBindingLedger
-from .durable_whop_bounty_worker import (
-    DurableWhopBountyExecutionResult,
-    execute_bound_whop_bounty_job,
-)
+from .durable_whop_bounty_worker import DurableWhopBountyExecutionResult, execute_bound_whop_bounty_job
 from .durable_worker import VerifiedLeasedOpportunityJob
 from .job_queue import JobQueue
 from .side_effects import SideEffectLedger
-from .whop_bounty_job_preparation import (
-    PreparedDurableWhopBountySubmission,
-    prepare_durable_whop_bounty_submission,
+from .whop_bounty_job_preparation import PreparedDurableWhopBountySubmission, prepare_durable_whop_bounty_submission
+from .whop_bounty_submission_provenance import (
+    WhopBountySubmissionProvenance,
+    WhopBountySubmissionProvenanceLedger,
 )
+from .whop_bounty_submission_runtime import execute_whop_bounty_job_and_record_provenance
 
 
 @dataclass(frozen=True)
 class WhopBountyEndToEndResult:
-    """One bounded durable Whop workforce attempt from preparation through reconciliation."""
+    """One bounded durable Whop workforce attempt from preparation through provenance."""
 
     prepared: PreparedDurableWhopBountySubmission
     execution: DurableWhopBountyExecutionResult
+    provenance: WhopBountySubmissionProvenance | None = None
 
 
 def execute_verified_whop_bounty_job(
@@ -42,15 +42,15 @@ def execute_verified_whop_bounty_job(
     credential_ref: CredentialRef,
     credential_provider: CredentialProvider,
     transport: WhopBountyHttpTransport,
+    provenance_ledger: WhopBountySubmissionProvenanceLedger | None = None,
     max_attempts: int = 3,
 ) -> WhopBountyEndToEndResult:
-    """Prepare, bind, execute and reconcile one verified durable Whop workforce job.
+    """Prepare, bind, execute and optionally persist payout-attribution provenance.
 
-    The function deliberately composes existing fail-closed boundaries rather than
-    duplicating their policy. Preparation validates the immutable opportunity and
-    final deliverable before reservation. The durable worker then binds that exact
-    reservation to the live leased job before the official Whop executor can perform
-    network I/O. Job completion is derived only from SideEffectLedger truth.
+    Existing fail-closed boundaries remain authoritative. When a provenance ledger is
+    supplied, confirmed successful execution is routed through the shared submission
+    runtime so immutable payout-attribution provenance is created in the same bounded
+    production path. Ambiguous/retryable execution never creates provenance.
     """
 
     if not isinstance(verified_job, VerifiedLeasedOpportunityJob):
@@ -63,6 +63,8 @@ def execute_verified_whop_bounty_job(
         raise TypeError("binding_ledger must be DurableWhopBountyBindingLedger")
     if not isinstance(side_effect_ledger, SideEffectLedger):
         raise TypeError("side_effect_ledger must be SideEffectLedger")
+    if provenance_ledger is not None and not isinstance(provenance_ledger, WhopBountySubmissionProvenanceLedger):
+        raise TypeError("provenance_ledger must be WhopBountySubmissionProvenanceLedger")
     if not isinstance(credential_ref, CredentialRef):
         raise TypeError("credential_ref must be CredentialRef")
     if credential_ref.platform != "whop" or credential_ref.secret_name != "user_token":
@@ -88,7 +90,20 @@ def execute_verified_whop_bounty_job(
             transport=transport,
         )
 
-    execution = execute_bound_whop_bounty_job(
+    if provenance_ledger is None:
+        execution = execute_bound_whop_bounty_job(
+            verified_job,
+            prepared.reservation,
+            queue=queue,
+            worker_id=worker_id,
+            now=now,
+            binding_ledger=binding_ledger,
+            side_effect_ledger=side_effect_ledger,
+            execute_submission=_execute,
+        )
+        return WhopBountyEndToEndResult(prepared=prepared, execution=execution)
+
+    runtime_result = execute_whop_bounty_job_and_record_provenance(
         verified_job,
         prepared.reservation,
         queue=queue,
@@ -96,6 +111,11 @@ def execute_verified_whop_bounty_job(
         now=now,
         binding_ledger=binding_ledger,
         side_effect_ledger=side_effect_ledger,
+        provenance_ledger=provenance_ledger,
         execute_submission=_execute,
     )
-    return WhopBountyEndToEndResult(prepared=prepared, execution=execution)
+    return WhopBountyEndToEndResult(
+        prepared=prepared,
+        execution=runtime_result.execution,
+        provenance=runtime_result.provenance,
+    )

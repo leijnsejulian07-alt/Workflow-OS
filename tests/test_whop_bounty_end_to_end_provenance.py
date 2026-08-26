@@ -135,7 +135,7 @@ class WhopBountyEndToEndProvenanceTests(unittest.TestCase):
         self.assertIsNotNone(result.provenance)
         self.assertEqual("opp-whop-prov-1", result.provenance.opportunity_id)
         self.assertEqual("bnty_prov123", result.provenance.bounty_id)
-        self.assertEqual("btys_prov123", result.provenance.external_submission_reference)
+        self.assertEqual("btys_prov123", result.provenance.submission_reference)
         self.assertEqual(result.provenance, self.provenance.get_by_reference("btys_prov123"))
         self.assertEqual(1, len(opener.requests))
 

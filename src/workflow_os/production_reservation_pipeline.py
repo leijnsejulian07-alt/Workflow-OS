@@ -19,6 +19,19 @@ class PreparedProductionSubmission:
     reservation: SubmissionReservation
 
 
+def _require_execution_authority(context: ProductionSubmissionContext) -> None:
+    if not isinstance(context, ProductionSubmissionContext):
+        raise ValueError("context must be ProductionSubmissionContext")
+    if not isinstance(context.machine_submission_verified, bool):
+        raise ValueError("machine_submission_verified must be boolean evidence")
+    if not isinstance(context.zero_touch_execution_enabled, bool):
+        raise ValueError("zero_touch_execution_enabled must be boolean evidence")
+    if context.machine_submission_verified is not True:
+        raise ValueError("machine submission authority is not verified")
+    if context.zero_touch_execution_enabled is not True:
+        raise ValueError("zero-touch execution is not enabled")
+
+
 def _build_preflight_request(
     source: ProducerOutput,
     *,
@@ -30,8 +43,7 @@ def _build_preflight_request(
 ) -> SubmissionRequest:
     if not isinstance(source, ProducerOutput):
         raise ValueError("source must be ProducerOutput")
-    if not isinstance(context, ProductionSubmissionContext):
-        raise ValueError("context must be ProductionSubmissionContext")
+    _require_execution_authority(context)
 
     return SubmissionRequest(
         opportunity_id=opportunity_id,
@@ -69,8 +81,9 @@ def verify_and_reserve_production_submission(
 ) -> PreparedProductionSubmission:
     """Fail closed from producer output through QC into a reserved submission.
 
-    The cheap submission gate runs before ffprobe, avoiding expensive local media
-    work for requests that already fail rights/account/destination/campaign policy.
+    Explicit machine-submission and zero-touch execution authority is required
+    before ffprobe/QC and before any SideEffectLedger mutation. This prevents a
+    generic publication path from bypassing a source opportunity's execution gate.
     After technical QC and manifest promotion, the final request is re-evaluated.
     Its idempotency key must exactly match the preflight decision before any ledger
     mutation is allowed.
@@ -110,6 +123,7 @@ def verify_and_reserve_production_submission(
         disclosure_satisfied=disclosure_satisfied,
         **probe_kwargs,
     )
+    _require_execution_authority(context)
     request = build_submission_request(verified.manifest, context)
     final_decision = evaluate_submission(
         request,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 from .reconciliation import ReconciledEvent, RevenueReconciliationLedger
 from .scaling_control import ScalingDirective, scaling_directive
@@ -50,9 +51,14 @@ def reconcile_delivered_website_payment_and_decide_next_action(
         raise ValueError("website delivery scope identity mismatch")
     if payment.payment_received is not True:
         raise ValueError("unconfirmed website payment cannot enter reconciliation truth")
-    if payment.currency.strip().upper() != "EUR":
+    if not isinstance(payment.currency, str) or payment.currency.strip().upper() != "EUR":
         raise ValueError("website settlement version 1 accepts EUR only")
-    if payment.amount_eur + 1e-9 < snapshot.fixed_price_eur:
+    if isinstance(payment.amount_eur, bool) or not isinstance(payment.amount_eur, (int, float)):
+        raise ValueError("website payment amount must be a finite numeric value")
+    amount_eur = float(payment.amount_eur)
+    if not math.isfinite(amount_eur) or amount_eur <= 0:
+        raise ValueError("website payment amount must be a finite numeric value")
+    if amount_eur + 1e-9 < snapshot.fixed_price_eur:
         raise ValueError("website payment is below immutable fixed price")
 
     event = reconciliation_ledger.record_event(
@@ -60,7 +66,7 @@ def reconcile_delivered_website_payment_and_decide_next_action(
         external_event_id=payment.payment_reference,
         opportunity_id=opportunity_id,
         event_type="CASH_RECEIVED",
-        amount_eur=payment.amount_eur,
+        amount_eur=amount_eur,
         occurred_at=payment.received_at,
         evidence_sha256=payment.evidence_sha256,
         currency="EUR",

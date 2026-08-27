@@ -86,8 +86,6 @@ def _slug(value: Any) -> str:
 def _contact_href(value: Any) -> str:
     href = _text(value, "contact_href", max_length=512)
     parsed = urlparse(href)
-    # The first bounded product supports only direct mail/phone CTA. This avoids
-    # hidden trackers, remote dependencies, javascript URLs, and SSRF-like fetches.
     if parsed.scheme not in {"mailto", "tel"}:
         raise ValueError("contact href must use mailto: or tel:")
     if parsed.netloc:
@@ -108,6 +106,16 @@ def _path_for_slug(slug: str) -> str:
 
 def _href_for_slug(slug: str) -> str:
     return "/" if slug == "index" else f"/{slug}/"
+
+
+def _manifest_digest(opportunity_id: str, scope_sha256: str, files: tuple[BuiltStaticFile, ...] | list[BuiltStaticFile]) -> str:
+    payload = {
+        "opportunity_id": opportunity_id,
+        "scope_sha256": scope_sha256,
+        "files": [{"path": f.path, "sha256": f.sha256, "size_bytes": f.size_bytes} for f in files],
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _render_page(spec: WebsiteContentSpec, page: StaticPageInput) -> str:
@@ -203,17 +211,12 @@ def build_static_site(
             raise ValueError("generated site exceeds total size limit")
         files.append(BuiltStaticFile(_path_for_slug(page.slug), rendered, hashlib.sha256(encoded).hexdigest(), len(encoded)))
 
-    manifest_payload = {
-        "opportunity_id": snapshot.opportunity_id,
-        "scope_sha256": snapshot.snapshot_sha256,
-        "files": [{"path": f.path, "sha256": f.sha256, "size_bytes": f.size_bytes} for f in files],
-    }
-    canonical = json.dumps(manifest_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    frozen_files = tuple(files)
     return WebsiteBuildArtifact(
         opportunity_id=snapshot.opportunity_id,
         scope_sha256=snapshot.snapshot_sha256,
-        files=tuple(files),
-        manifest_sha256=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        files=frozen_files,
+        manifest_sha256=_manifest_digest(snapshot.opportunity_id, snapshot.snapshot_sha256, frozen_files),
         total_bytes=total,
     )
 
@@ -232,6 +235,8 @@ def qa_static_site(snapshot: WebsiteScopeSnapshot, artifact: WebsiteBuildArtifac
     paths = {file.path for file in artifact.files}
     if len(paths) != len(artifact.files) or "index.html" not in paths:
         return WebsiteQADecision("HOLD", "ARTIFACT_PATH_SET_INVALID", snapshot.opportunity_id, artifact.manifest_sha256)
+    if _manifest_digest(artifact.opportunity_id, artifact.scope_sha256, artifact.files) != artifact.manifest_sha256:
+        return WebsiteQADecision("HOLD", "ARTIFACT_MANIFEST_MISMATCH", snapshot.opportunity_id, artifact.manifest_sha256)
 
     linked_paths: set[str] = set()
     total = 0

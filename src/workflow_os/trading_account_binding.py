@@ -118,7 +118,10 @@ def assess_account_binding(
     """Fail-closed binding gate. This never emits or dispatches an order."""
     if max_evidence_age <= timedelta(0) or max_evidence_age > timedelta(days=30):
         raise ValueError("max_evidence_age must be > 0 and <= 30 days")
-    observed_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    observed_now = now or datetime.now(timezone.utc)
+    if observed_now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    observed_now = observed_now.astimezone(timezone.utc)
     checked = datetime.fromisoformat(evidence.checked_at).astimezone(timezone.utc)
 
     reasons: list[str] = []

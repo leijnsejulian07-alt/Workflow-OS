@@ -13,6 +13,8 @@ class ProductionSubmissionContext:
     destination_url: str
     caption: str
     account_authorized: bool
+    machine_submission_verified: bool = False
+    zero_touch_execution_enabled: bool = False
 
 
 def build_submission_request(
@@ -23,7 +25,8 @@ def build_submission_request(
 
     This is a pure handoff boundary: it performs no rendering, network access,
     credential resolution, upload, or rights inference. Rejected production assets
-    never become submission requests.
+    never become submission requests. Execution authority is enforced by the
+    reservation/execution control plane rather than inferred here.
     """
 
     decision = evaluate_production_asset(manifest)

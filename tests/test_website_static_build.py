@@ -1,3 +1,5 @@
+import hashlib
+import json
 import unittest
 from dataclasses import replace
 
@@ -49,6 +51,21 @@ class WebsiteStaticBuildTests(unittest.TestCase):
             contact_href="mailto:info@example.com",
         )
 
+    def _artifact_with_files(self, original, files):
+        payload = {
+            "opportunity_id": original.opportunity_id,
+            "scope_sha256": original.scope_sha256,
+            "files": [{"path": f.path, "sha256": f.sha256, "size_bytes": f.size_bytes} for f in files],
+        }
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return WebsiteBuildArtifact(
+            opportunity_id=original.opportunity_id,
+            scope_sha256=original.scope_sha256,
+            files=tuple(files),
+            manifest_sha256=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+            total_bytes=sum(f.size_bytes for f in files),
+        )
+
     def test_build_and_qa_pass_without_external_side_effects(self):
         artifact = build_static_site(self.snapshot, self.gate, self.content)
         self.assertEqual(artifact.opportunity_id, self.snapshot.opportunity_id)
@@ -97,7 +114,7 @@ class WebsiteStaticBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "mailto"):
             build_static_site(self.snapshot, self.gate, replace(self.content, contact_href="javascript:alert(1)"))
 
-    def test_qa_detects_digest_tampering(self):
+    def test_qa_detects_content_tampering(self):
         artifact = build_static_site(self.snapshot, self.gate, self.content)
         first = artifact.files[0]
         tampered = replace(first, content=first.content + "tamper")
@@ -106,6 +123,13 @@ class WebsiteStaticBuildTests(unittest.TestCase):
         self.assertEqual(decision.state, "HOLD")
         self.assertEqual(decision.reason, "ARTIFACT_SIZE_MISMATCH")
 
+    def test_qa_detects_manifest_metadata_tampering(self):
+        artifact = build_static_site(self.snapshot, self.gate, self.content)
+        bad = replace(artifact, manifest_sha256="b" * 64)
+        decision = qa_static_site(self.snapshot, bad)
+        self.assertEqual(decision.state, "HOLD")
+        self.assertEqual(decision.reason, "ARTIFACT_MANIFEST_MISMATCH")
+
     def test_qa_detects_broken_internal_link(self):
         artifact = build_static_site(self.snapshot, self.gate, self.content)
         first = artifact.files[0]
@@ -113,17 +137,10 @@ class WebsiteStaticBuildTests(unittest.TestCase):
         mutated = BuiltStaticFile(
             path=first.path,
             content=mutated_content,
-            sha256=__import__("hashlib").sha256(mutated_content.encode("utf-8")).hexdigest(),
+            sha256=hashlib.sha256(mutated_content.encode("utf-8")).hexdigest(),
             size_bytes=len(mutated_content.encode("utf-8")),
         )
-        total = mutated.size_bytes + sum(f.size_bytes for f in artifact.files[1:])
-        bad = WebsiteBuildArtifact(
-            opportunity_id=artifact.opportunity_id,
-            scope_sha256=artifact.scope_sha256,
-            files=(mutated,) + artifact.files[1:],
-            manifest_sha256=artifact.manifest_sha256,
-            total_bytes=total,
-        )
+        bad = self._artifact_with_files(artifact, (mutated,) + artifact.files[1:])
         decision = qa_static_site(self.snapshot, bad)
         self.assertEqual(decision.state, "HOLD")
         self.assertEqual(decision.reason, "BROKEN_INTERNAL_LINK")
@@ -132,18 +149,13 @@ class WebsiteStaticBuildTests(unittest.TestCase):
         artifact = build_static_site(self.snapshot, self.gate, self.content)
         first = artifact.files[0]
         mutated_content = first.content.replace("</head>", '<link rel="stylesheet" href="https://evil.example/x.css"></head>')
-        import hashlib
         mutated = BuiltStaticFile(
             path=first.path,
             content=mutated_content,
             sha256=hashlib.sha256(mutated_content.encode("utf-8")).hexdigest(),
             size_bytes=len(mutated_content.encode("utf-8")),
         )
-        bad = replace(
-            artifact,
-            files=(mutated,) + artifact.files[1:],
-            total_bytes=mutated.size_bytes + sum(f.size_bytes for f in artifact.files[1:]),
-        )
+        bad = self._artifact_with_files(artifact, (mutated,) + artifact.files[1:])
         decision = qa_static_site(self.snapshot, bad)
         self.assertEqual(decision.state, "HOLD")
         self.assertEqual(decision.reason, "REMOTE_DEPENDENCY_PROHIBITED")

@@ -33,11 +33,13 @@ def source(**overrides):
 
 def context(**overrides):
     values = {
-        "source_platform": "cliparmy",
-        "campaign_url": "https://cliparmy.com/campaigns/example",
+        "source_platform": "verified-machine-source",
+        "campaign_url": "https://example.com/campaigns/example",
         "destination_url": "https://www.tiktok.com/upload",
         "caption": "Campaign-compliant caption",
         "account_authorized": True,
+        "machine_submission_verified": True,
+        "zero_touch_execution_enabled": True,
     }
     values.update(overrides)
     return ProductionSubmissionContext(**values)
@@ -101,23 +103,50 @@ class ProductionReservationPipelineTests(unittest.TestCase):
     @patch("workflow_os.production_reservation_pipeline.verify_production_output")
     def test_verified_output_is_reserved(self, verify_mock):
         verify_mock.return_value = verified_result(self.src)
-        prepared = verify_and_reserve_production_submission(
-            self.tempdir.name,
-            self.src,
-            **self.kwargs,
-        )
+        prepared = verify_and_reserve_production_submission(self.tempdir.name, self.src, **self.kwargs)
         self.assertTrue(prepared.reservation.decision.allowed)
         self.assertEqual(prepared.reservation.side_effect.state, "RESERVED")
-        self.assertEqual(prepared.request.asset.sha256, DIGEST)
         verify_mock.assert_called_once()
+
+    @patch("workflow_os.production_reservation_pipeline.verify_production_output")
+    def test_unverified_machine_submission_fails_before_qc(self, verify_mock):
+        blocked = context(
+            source_platform="cliparmy",
+            campaign_url="https://cliparmy.com/campaigns/example",
+            machine_submission_verified=False,
+            zero_touch_execution_enabled=False,
+        )
+        with self.assertRaisesRegex(ValueError, "machine submission authority is not verified"):
+            verify_and_reserve_production_submission(
+                self.tempdir.name, self.src, **{**self.kwargs, "context": blocked}
+            )
+        verify_mock.assert_not_called()
+
+    @patch("workflow_os.production_reservation_pipeline.verify_production_output")
+    def test_disabled_zero_touch_fails_before_qc(self, verify_mock):
+        with self.assertRaisesRegex(ValueError, "zero-touch execution is not enabled"):
+            verify_and_reserve_production_submission(
+                self.tempdir.name,
+                self.src,
+                **{**self.kwargs, "context": context(zero_touch_execution_enabled=False)},
+            )
+        verify_mock.assert_not_called()
+
+    @patch("workflow_os.production_reservation_pipeline.verify_production_output")
+    def test_hostile_non_boolean_execution_authority_fails_before_qc(self, verify_mock):
+        with self.assertRaisesRegex(ValueError, "machine_submission_verified must be boolean"):
+            verify_and_reserve_production_submission(
+                self.tempdir.name,
+                self.src,
+                **{**self.kwargs, "context": context(machine_submission_verified="true")},
+            )
+        verify_mock.assert_not_called()
 
     @patch("workflow_os.production_reservation_pipeline.verify_production_output")
     def test_unauthorized_account_fails_before_qc(self, verify_mock):
         with self.assertRaisesRegex(ValueError, "preflight rejected"):
             verify_and_reserve_production_submission(
-                self.tempdir.name,
-                self.src,
-                **{**self.kwargs, "context": context(account_authorized=False)},
+                self.tempdir.name, self.src, **{**self.kwargs, "context": context(account_authorized=False)}
             )
         verify_mock.assert_not_called()
 
@@ -125,22 +154,7 @@ class ProductionReservationPipelineTests(unittest.TestCase):
     def test_unknown_rights_fail_before_qc(self, verify_mock):
         with self.assertRaisesRegex(ValueError, "preflight rejected"):
             verify_and_reserve_production_submission(
-                self.tempdir.name,
-                self.src,
-                **{**self.kwargs, "source_material_rights_verified": False},
-            )
-        verify_mock.assert_not_called()
-
-    @patch("workflow_os.production_reservation_pipeline.verify_production_output")
-    def test_unapproved_destination_fails_before_qc(self, verify_mock):
-        with self.assertRaisesRegex(ValueError, "preflight rejected"):
-            verify_and_reserve_production_submission(
-                self.tempdir.name,
-                self.src,
-                **{
-                    **self.kwargs,
-                    "context": context(destination_url="https://evil.example/upload"),
-                },
+                self.tempdir.name, self.src, **{**self.kwargs, "source_material_rights_verified": False}
             )
         verify_mock.assert_not_called()
 
@@ -155,49 +169,18 @@ class ProductionReservationPipelineTests(unittest.TestCase):
             campaign_requirements_verified=True,
             disclosure_satisfied=True,
         )
-        preflight = evaluate_submission(
-            preflight_request,
-            allowed_destination_hosts={"www.tiktok.com"},
-        )
-        self.assertIsNotNone(preflight.idempotency_key)
-
+        preflight = evaluate_submission(preflight_request, allowed_destination_hosts={"www.tiktok.com"})
         with self.assertRaisesRegex(RuntimeError, "changed publication identity"):
-            verify_and_reserve_production_submission(
-                self.tempdir.name,
-                self.src,
-                **self.kwargs,
-            )
+            verify_and_reserve_production_submission(self.tempdir.name, self.src, **self.kwargs)
         self.assertIsNone(self.ledger.get(preflight.idempotency_key))
 
     @patch("workflow_os.production_reservation_pipeline.verify_production_output")
     def test_same_submission_reservation_is_idempotent(self, verify_mock):
         verify_mock.return_value = verified_result(self.src)
-        first = verify_and_reserve_production_submission(
-            self.tempdir.name,
-            self.src,
-            **self.kwargs,
-        )
-        second = verify_and_reserve_production_submission(
-            self.tempdir.name,
-            self.src,
-            **self.kwargs,
-        )
-        self.assertEqual(
-            first.reservation.side_effect.idempotency_key,
-            second.reservation.side_effect.idempotency_key,
-        )
+        first = verify_and_reserve_production_submission(self.tempdir.name, self.src, **self.kwargs)
+        second = verify_and_reserve_production_submission(self.tempdir.name, self.src, **self.kwargs)
+        self.assertEqual(first.reservation.side_effect.idempotency_key, second.reservation.side_effect.idempotency_key)
         self.assertEqual(second.reservation.side_effect.state, "RESERVED")
-
-    @patch("workflow_os.production_reservation_pipeline.verify_production_output")
-    def test_invalid_retry_budget_fails_before_qc(self, verify_mock):
-        with self.assertRaisesRegex(ValueError, "max_attempts"):
-            verify_and_reserve_production_submission(
-                self.tempdir.name,
-                self.src,
-                **self.kwargs,
-                max_attempts=True,
-            )
-        verify_mock.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -38,9 +38,9 @@ _NUMERIC_FIELDS = (
     "headline_budget",
     "remaining_budget",
     "cpm",
-    "minimum_views",
     "payout_per_1000_views",
 )
+_NONNEGATIVE_INTEGER_FIELDS = ("minimum_views",)
 
 
 def _validate_optional_nonnegative_number(payload: Mapping[str, object], key: str) -> None:
@@ -52,6 +52,14 @@ def _validate_optional_nonnegative_number(payload: Mapping[str, object], key: st
     number = float(value)
     if not math.isfinite(number) or number < 0:
         raise ValueError(f"{key} must be finite and non-negative")
+
+
+def _validate_optional_nonnegative_integer(payload: Mapping[str, object], key: str) -> None:
+    value = payload.get(key)
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{key} must be a non-negative integer when present")
 
 
 def normalize_public_clipping_campaign(
@@ -66,6 +74,8 @@ def normalize_public_clipping_campaign(
 
     for key in _NUMERIC_FIELDS:
         _validate_optional_nonnegative_number(payload, key)
+    for key in _NONNEGATIVE_INTEGER_FIELDS:
+        _validate_optional_nonnegative_integer(payload, key)
 
     normalized_payload = dict(payload)
     normalized_payload["machine_submission_verified"] = False

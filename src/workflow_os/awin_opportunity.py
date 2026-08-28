@@ -41,6 +41,8 @@ class TrustedAwinProgramEvidence:
     expected_time_to_cash_hours: float
     automation_completeness: float
     capital_required_eur: float
+    remaining_budget_eur: float
+    payout_cap_eur: float
     compliance_risk: str
     platform_risk: str
     duplicate_conflict_status: str
@@ -108,7 +110,7 @@ def _opportunity_id(evidence: TrustedAwinProgramEvidence) -> str:
 
 
 def build_awin_opportunity(evidence: TrustedAwinProgramEvidence) -> dict[str, object]:
-    """Return a central Opportunity Manager payload from independently verified Awin terms."""
+    """Return an Opportunity Manager payload from independently verified Awin terms."""
     if not isinstance(evidence, TrustedAwinProgramEvidence):
         raise TypeError("evidence must be TrustedAwinProgramEvidence")
     publisher_id = _positive_int(evidence.publisher_id, "publisher_id")
@@ -135,10 +137,9 @@ def build_awin_opportunity(evidence: TrustedAwinProgramEvidence) -> dict[str, ob
     if evidence.commission_rate_is_percent is True:
         if rate > 100:
             raise ValueError("percentage commission rate exceeds 100%")
-    elif evidence.commission_rate_is_percent is False:
-        if model == "CPC":
-            pass
-    else:
+        if model != "CPA":
+            raise ValueError("percentage commission is supported only for CPA in v1")
+    elif evidence.commission_rate_is_percent is not False:
         raise TypeError("commission_rate_is_percent must be boolean")
 
     clicks = _nonnegative(evidence.expected_clicks, "expected_clicks")
@@ -150,15 +151,19 @@ def build_awin_opportunity(evidence: TrustedAwinProgramEvidence) -> dict[str, ob
     time_to_cash = _nonnegative(evidence.expected_time_to_cash_hours, "expected_time_to_cash_hours")
     automation = _probability(evidence.automation_completeness, "automation_completeness")
     capital = _nonnegative(evidence.capital_required_eur, "capital_required_eur")
+    remaining_budget = _nonnegative(evidence.remaining_budget_eur, "remaining_budget_eur")
+    payout_cap = _nonnegative(evidence.payout_cap_eur, "payout_cap_eur")
 
     if evidence.commission_rate_is_percent:
-        if model != "CPA":
-            raise ValueError("percentage commission is supported only for CPA in v1")
         gross = clicks * conversion * average_order * (rate / 100.0)
-    elif model == "CPA" or model == "CPL":
+    elif model in {"CPA", "CPL"}:
         gross = clicks * conversion * rate
     else:
         gross = clicks * rate
+    if gross > remaining_budget:
+        raise ValueError("forecast revenue exceeds independently verified remaining budget")
+    if gross > payout_cap:
+        raise ValueError("forecast revenue exceeds independently verified payout cap")
 
     compliance_risk = _text(evidence.compliance_risk, "compliance_risk", max_len=16).upper()
     platform_risk = _text(evidence.platform_risk, "platform_risk", max_len=16).upper()
@@ -208,9 +213,9 @@ def build_awin_opportunity(evidence: TrustedAwinProgramEvidence) -> dict[str, ob
         "source_checked_at": observed_at,
         "freshness_ttl_seconds": evidence.freshness_ttl_seconds,
         "deadline": deadline,
-        "remaining_budget": gross,
+        "remaining_budget": remaining_budget,
         "payout_formula": f"AWIN_{model}_{'PERCENT' if evidence.commission_rate_is_percent else 'FIXED'}",
-        "payout_cap": gross,
+        "payout_cap": payout_cap,
         "payment_method": _text(evidence.payment_method, "payment_method"),
         "approval_rules": _text(evidence.approval_rules, "approval_rules"),
         "originality_requirements": _text(evidence.originality_requirements, "originality_requirements"),

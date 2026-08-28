@@ -65,6 +65,25 @@ class AwinTransactionEvidenceTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertTrue(audit.verify_audit_chain())
 
+    def test_status_transition_creates_separate_immutable_snapshots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = AuditRevenueLedger(Path(tmp) / "audit.sqlite")
+            kwargs = dict(
+                expected_opportunity_id="opp-aff-1",
+                opportunity_ledger=_KnownOpportunityLedger(),
+                audit_ledger=audit,
+            )
+            pending = _raw(
+                status="pending",
+                validation_at=None,
+                evidence_sha256="b" * 64,
+            )
+            approved = _raw(status="approved", evidence_sha256="c" * 64)
+            record_awin_transaction_evidence(pending, **kwargs)
+            record_awin_transaction_evidence(approved, **kwargs)
+            self.assertEqual(audit.gross_cash_eur(), 0.0)
+            self.assertTrue(audit.verify_audit_chain())
+
     def test_replay_with_changed_evidence_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             audit = AuditRevenueLedger(Path(tmp) / "audit.sqlite")

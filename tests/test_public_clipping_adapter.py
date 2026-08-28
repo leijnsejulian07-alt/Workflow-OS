@@ -64,7 +64,6 @@ class PublicClippingAdapterTests(unittest.TestCase):
             ("headline_budget", -1),
             ("remaining_budget", float("inf")),
             ("cpm", "2.00"),
-            ("minimum_views", True),
             ("payout_per_1000_views", -0.01),
         ):
             with self.subTest(key=key):
@@ -72,6 +71,19 @@ class PublicClippingAdapterTests(unittest.TestCase):
                 bad[key] = value
                 with self.assertRaises(ValueError):
                     normalize_clipping_net_campaign(bad)
+
+    def test_minimum_views_requires_nonnegative_integer(self):
+        for value in (True, -1, 12.5, "1000"):
+            with self.subTest(value=value):
+                bad = payload("vues")
+                bad["minimum_views"] = value
+                with self.assertRaises(ValueError):
+                    normalize_vues_campaign(bad)
+
+        valid = payload("vues")
+        valid["minimum_views"] = 1000
+        record = normalize_vues_campaign(valid)
+        self.assertEqual(record.fields["minimum_views"], 1000)
 
     def test_rejects_wrong_host_source_or_platform(self):
         wrong_host = payload("vues")

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from workflow_os.sqlite_lifecycle import managed_connection
 from workflow_os.durable_side_effect_binding import (
     DurableSideEffectBinding,
     DurableSideEffectBindingLedger,
@@ -116,7 +117,7 @@ class DurableSideEffectBindingTests(unittest.TestCase):
 
     def test_binding_ledger_round_trip(self):
         binding = DurableSideEffectBinding(1, "a" * 64, "opp-1", "publish-1", "b" * 64)
-        with self.bindings._connect() as db:
+        with managed_connection(self.bindings._connect()) as db:
             db.execute(
                 "INSERT INTO durable_side_effect_bindings(job_id,job_request_fingerprint,opportunity_id,side_effect_idempotency_key,side_effect_request_fingerprint) VALUES(?,?,?,?,?)",
                 (binding.job_id, binding.job_request_fingerprint, binding.opportunity_id,

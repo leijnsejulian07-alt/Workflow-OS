@@ -4,6 +4,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from workflow_os.sqlite_lifecycle import managed_connection
 from workflow_os.side_effect_recovery import recover_orphaned_execution
 from workflow_os.side_effects import SideEffectLedger
 
@@ -22,7 +23,7 @@ class SideEffectRecoveryTests(unittest.TestCase):
         return path, ledger
 
     def set_updated_at(self, path, key, value):
-        with sqlite3.connect(path) as db:
+        with managed_connection(sqlite3.connect(path)) as db:
             db.execute("UPDATE side_effects SET updated_at=? WHERE idempotency_key=?", (value, key))
 
     def test_fresh_execution_cannot_be_stolen_or_retried(self):

@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from workflow_os.sqlite_lifecycle import managed_connection
 from workflow_os.durable_worker import claim_verified_opportunity_job
 from workflow_os.job_queue import JobQueue
 
@@ -61,7 +62,7 @@ class DurableWorkerTests(unittest.TestCase):
         )
 
     def _state(self, job_id):
-        with sqlite3.connect(self.db_path) as db:
+        with managed_connection(sqlite3.connect(self.db_path)) as db:
             row = db.execute(
                 "SELECT state,attempt_count,last_error FROM jobs WHERE job_id=?",
                 (job_id,),
@@ -120,7 +121,7 @@ class DurableWorkerTests(unittest.TestCase):
 
     def test_mutated_persisted_payload_is_caught_by_queue_fingerprint(self):
         job = self._enqueue()
-        with sqlite3.connect(self.db_path) as db:
+        with managed_connection(sqlite3.connect(self.db_path)) as db:
             db.execute(
                 "UPDATE jobs SET request_json=? WHERE job_id=?",
                 (json.dumps({"opportunity_id": "op-1", "tampered": True}), job.job_id),

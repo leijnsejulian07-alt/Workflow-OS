@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from workflow_os.sqlite_lifecycle import managed_connection
 from workflow_os.audit import AuditRevenueLedger, CashReceipt
 from workflow_os.ledger import OpportunityLedger
 from workflow_os.opportunities import OpportunityDecision
@@ -23,7 +24,7 @@ class RevenueLearningTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _persist_opportunity(self, opportunity_id: str, source_platform: str = "test") -> None:
-        with sqlite3.connect(self.path) as db:
+        with managed_connection(sqlite3.connect(self.path)) as db:
             db.execute(
                 """
                 INSERT INTO opportunities(

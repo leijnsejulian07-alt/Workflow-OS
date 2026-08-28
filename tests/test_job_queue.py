@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from workflow_os.sqlite_lifecycle import managed_connection
 from workflow_os.job_queue import JobQueue
 
 
@@ -86,7 +87,7 @@ class JobQueueTests(unittest.TestCase):
             now="2026-08-22T10:00:00+00:00",
             lease_seconds=60,
         )
-        with sqlite3.connect(self.db_path) as db:
+        with managed_connection(sqlite3.connect(self.db_path)) as db:
             db.execute(
                 "UPDATE jobs SET request_json=? WHERE job_id=?",
                 ('{"clip_id":"tampered"}', job.job_id),

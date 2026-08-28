@@ -152,9 +152,6 @@ def make_server(service: LocalIngestService, host: str = "127.0.0.1", port: int 
             if self.headers.get("Transfer-Encoding"):
                 self._reply(400, {"error": "transfer_encoding_not_allowed"})
                 return
-            if self.headers.get_content_type() != "application/json":
-                self._reply(415, {"error": "application_json_required"})
-                return
             raw_length = self.headers.get("Content-Length")
             if raw_length is None:
                 self._reply(411, {"error": "content_length_required"})
@@ -166,6 +163,13 @@ def make_server(service: LocalIngestService, host: str = "127.0.0.1", port: int 
                 return
             if length < 0 or length > MAX_REQUEST_BYTES:
                 self._reply(413, {"error": "payload_too_large"})
+                return
+            if self.headers.get_content_type() != "application/json":
+                # Drain only the already-bounded request body before replying. On
+                # Windows, closing a socket with unread request bytes can surface as
+                # WSAECONNABORTED at the local client before it receives the 415.
+                self.rfile.read(length)
+                self._reply(415, {"error": "application_json_required"})
                 return
             body = self.rfile.read(length)
             if len(body) != length:

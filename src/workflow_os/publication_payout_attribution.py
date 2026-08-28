@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .audit import AuditRevenueLedger
 from .publication_provenance import PublicationProvenance, PublicationProvenanceLedger
+from .sqlite_lifecycle import managed_connection
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -54,7 +55,7 @@ def _load_receipt_identity(
     if not path.exists() or not path.is_file():
         raise ValueError("audit revenue ledger is unavailable")
     try:
-        with sqlite3.connect(str(path), timeout=5.0) as db:
+        with managed_connection(sqlite3.connect(str(path), timeout=5.0)) as db:
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA query_only = ON")
             db.execute("PRAGMA busy_timeout = 5000")

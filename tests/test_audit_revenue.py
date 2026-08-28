@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from workflow_os.sqlite_lifecycle import managed_connection
 from workflow_os.audit import AuditRevenueLedger, CashReceipt
 from workflow_os.ledger import OpportunityLedger
 
@@ -21,7 +22,7 @@ class AuditRevenueLedgerTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _opportunity(self, opportunity_id="op-1", source_platform="test"):
-        with sqlite3.connect(self.path) as db:
+        with managed_connection(sqlite3.connect(self.path)) as db:
             db.execute(
                 """
                 INSERT INTO opportunities(
@@ -53,7 +54,7 @@ class AuditRevenueLedgerTests(unittest.TestCase):
 
     def test_tampered_audit_row_is_detected(self):
         self.ledger.append_event("evt-1", "a", {"x": 1}, occurred_at="2026-08-14T06:00:00+00:00")
-        with sqlite3.connect(self.path) as db:
+        with managed_connection(sqlite3.connect(self.path)) as db:
             db.execute("UPDATE audit_events SET event_json='{}' WHERE event_id='evt-1'")
         self.assertFalse(self.ledger.verify_audit_chain())
 

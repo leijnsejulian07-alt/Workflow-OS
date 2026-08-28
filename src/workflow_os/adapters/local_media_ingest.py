@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from ..production_handoff import ProducerOutput
 
@@ -25,7 +25,8 @@ def _relative_path(value: object) -> PurePosixPath:
     if not cleaned or len(cleaned) > 500:
         raise ValueError("relative_path must be 1..500 characters")
     path = PurePosixPath(cleaned)
-    if path.is_absolute() or ".." in path.parts or "." in path.parts:
+    windows_path = PureWindowsPath(value.strip())
+    if path.is_absolute() or windows_path.is_absolute() or ".." in path.parts or "." in path.parts:
         raise ValueError("relative_path must be relative and traversal-free")
     return path
 

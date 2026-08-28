@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from workflow_os.sqlite_lifecycle import managed_connection
 from workflow_os.ledger import OpportunityLedger
 from workflow_os.reconciliation import RevenueReconciliationLedger
 from workflow_os.resource_cost import ResourceCostLedger, promote_verified_cost
@@ -18,7 +19,7 @@ class ResourceCostLedgerTests(unittest.TestCase):
         OpportunityLedger(self.path)
         self.costs = ResourceCostLedger(self.path)
         self.reconciliation = RevenueReconciliationLedger(self.path)
-        with sqlite3.connect(self.path) as db:
+        with managed_connection(sqlite3.connect(self.path)) as db:
             db.execute(
                 """
                 INSERT INTO opportunities(
@@ -96,7 +97,7 @@ class ResourceCostLedgerTests(unittest.TestCase):
 
     def test_platform_drift_before_promotion_fails_closed(self):
         self._record()
-        with sqlite3.connect(self.path) as db:
+        with managed_connection(sqlite3.connect(self.path)) as db:
             db.execute(
                 "UPDATE opportunities SET source_platform='other' WHERE opportunity_id='op-1'"
             )

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from workflow_os.sqlite_lifecycle import managed_connection
 from workflow_os.adapters.whop_bounty_submission import WHOP_BOUNTY_SUBMISSION_URL
 from workflow_os.audit import AuditRevenueLedger, CashReceipt
 from workflow_os.durable_whop_bounty_binding import DurableWhopBountyBinding
@@ -26,7 +27,7 @@ class WhopBountyPayoutAttributionTests(unittest.TestCase):
         self.effects = SideEffectLedger(root / "effects.sqlite")
         self.provenance = WhopBountySubmissionProvenanceLedger(root / "provenance.sqlite")
 
-        with sqlite3.connect(self.audit.path) as db:
+        with managed_connection(sqlite3.connect(self.audit.path)) as db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS opportunities ("
                 "opportunity_id TEXT PRIMARY KEY, source_platform TEXT NOT NULL)"

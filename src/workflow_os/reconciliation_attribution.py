@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from .reconciliation import ReconciledEvent, RevenueReconciliationLedger
+from .sqlite_lifecycle import managed_connection
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -56,7 +57,7 @@ def load_attributed_cash_receipt(
     receipt = _bounded_identifier(receipt_id, "receipt_id")
 
     try:
-        with sqlite3.connect(str(path), timeout=5.0) as db:
+        with managed_connection(sqlite3.connect(str(path), timeout=5.0)) as db:
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA query_only = ON")
             db.execute("PRAGMA busy_timeout = 5000")

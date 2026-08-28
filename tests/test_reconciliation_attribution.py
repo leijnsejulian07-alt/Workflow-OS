@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from workflow_os.sqlite_lifecycle import managed_connection
 from workflow_os.audit import AuditRevenueLedger, CashReceipt
 from workflow_os.ledger import OpportunityLedger
 from workflow_os.reconciliation import RevenueReconciliationLedger
@@ -25,7 +26,7 @@ class ReconciliationAttributionTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _opportunity(self, opportunity_id="op-1", source_platform="test"):
-        with sqlite3.connect(self.path) as db:
+        with managed_connection(sqlite3.connect(self.path)) as db:
             db.execute(
                 """
                 INSERT INTO opportunities(
@@ -108,7 +109,7 @@ class ReconciliationAttributionTests(unittest.TestCase):
 
     def test_platform_drift_after_attribution_fails_closed(self):
         self._record_and_attribute()
-        with sqlite3.connect(self.path) as db:
+        with managed_connection(sqlite3.connect(self.path)) as db:
             db.execute(
                 "UPDATE opportunities SET source_platform='other' WHERE opportunity_id='op-1'"
             )

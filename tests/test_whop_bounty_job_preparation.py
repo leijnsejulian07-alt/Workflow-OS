@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from workflow_os.sqlite_lifecycle import managed_connection
 from workflow_os.adapters.whop_bounty_submission import WhopBountyDeliverable
 from workflow_os.durable_worker import VerifiedLeasedOpportunityJob
 from workflow_os.job_queue import JobRecord
@@ -66,7 +67,7 @@ class DurableWhopBountyPreparationTests(unittest.TestCase):
         )
 
     def _count_effects(self):
-        with sqlite3.connect(self.ledger.path) as db:
+        with managed_connection(sqlite3.connect(self.ledger.path)) as db:
             return db.execute("SELECT COUNT(*) FROM side_effects").fetchone()[0]
 
     def test_prepares_one_job_bound_reservation(self):

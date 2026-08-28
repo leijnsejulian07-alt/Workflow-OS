@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from workflow_os.sqlite_lifecycle import managed_connection
 from workflow_os.durable_scheduler import enqueue_controlled_candidates
 from workflow_os.job_queue import JobQueue
 from workflow_os.ledger import OpportunityLedger
@@ -27,7 +28,7 @@ class OpportunitySnapshotTests(unittest.TestCase):
             "title": "Authorized clipping campaign",
         }
         canonical = json.dumps(self.normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        with sqlite3.connect(self.db_path) as db:
+        with managed_connection(sqlite3.connect(self.db_path)) as db:
             db.execute(
                 "INSERT INTO opportunities(opportunity_id,normalized_json,source_platform,campaign_id,discovered_at,updated_at) VALUES(?,?,?,?,?,?)",
                 (

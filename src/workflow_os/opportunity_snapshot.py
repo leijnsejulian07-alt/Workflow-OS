@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .ledger import OpportunityLedger
+from .sqlite_lifecycle import managed_connection
 
 
 @dataclass(frozen=True)
@@ -26,7 +27,7 @@ def snapshot_opportunity(ledger: OpportunityLedger, opportunity_id: object) -> O
     if not op_id or len(op_id) > 200 or any(ord(ch) < 32 for ch in op_id):
         raise ValueError("invalid opportunity_id")
 
-    with sqlite3.connect(ledger.path, timeout=5.0) as db:
+    with managed_connection(sqlite3.connect(ledger.path, timeout=5.0)) as db:
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=5000")
         row = db.execute(

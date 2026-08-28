@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from workflow_os.sqlite_lifecycle import managed_connection
 from workflow_os.audit import AuditRevenueLedger, CashReceipt
 from workflow_os.durable_side_effect_binding import DurableSideEffectBinding
 from workflow_os.publication_payout_attribution import (
@@ -23,7 +24,7 @@ class PublicationPayoutAttributionTests(unittest.TestCase):
         self.effects = SideEffectLedger(root / "effects.sqlite")
         self.provenance = PublicationProvenanceLedger(root / "provenance.sqlite")
 
-        with sqlite3.connect(self.audit.path) as db:
+        with managed_connection(sqlite3.connect(self.audit.path)) as db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS opportunities ("
                 "opportunity_id TEXT PRIMARY KEY, source_platform TEXT NOT NULL)"

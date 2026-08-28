@@ -31,6 +31,8 @@ class AwinOpportunityTests(unittest.TestCase):
             expected_time_to_cash_hours=720.0,
             automation_completeness=0.9,
             capital_required_eur=0.0,
+            remaining_budget_eur=500.0,
+            payout_cap_eur=250.0,
             compliance_risk="LOW",
             platform_risk="LOW",
             duplicate_conflict_status="CLEAR",
@@ -55,6 +57,8 @@ class AwinOpportunityTests(unittest.TestCase):
         self.assertFalse(raw["proves_received_cash"])
         self.assertEqual(raw["tracking_click_ref"], f"workflow-os:{raw['opportunity_id']}")
         self.assertAlmostEqual(raw["expected_revenue"], 100.0)
+        self.assertEqual(raw["remaining_budget"], 500.0)
+        self.assertEqual(raw["payout_cap"], 250.0)
 
     def test_program_must_be_approved(self) -> None:
         evidence = TrustedAwinProgramEvidence(**{**self.evidence.__dict__, "program_approved": False})
@@ -97,6 +101,19 @@ class AwinOpportunityTests(unittest.TestCase):
             **{**self.evidence.__dict__, "expected_approval_rate": 1.1}
         )
         with self.assertRaisesRegex(ValueError, "within \[0, 1\]"):
+            build_awin_opportunity(evidence)
+
+    def test_forecast_cannot_invent_budget_or_payout_cap(self) -> None:
+        evidence = TrustedAwinProgramEvidence(
+            **{**self.evidence.__dict__, "remaining_budget_eur": 99.0}
+        )
+        with self.assertRaisesRegex(ValueError, "remaining budget"):
+            build_awin_opportunity(evidence)
+
+        evidence = TrustedAwinProgramEvidence(
+            **{**self.evidence.__dict__, "payout_cap_eur": 99.0}
+        )
+        with self.assertRaisesRegex(ValueError, "payout cap"):
             build_awin_opportunity(evidence)
 
     def test_stale_evidence_cannot_claim_long_ttl(self) -> None:

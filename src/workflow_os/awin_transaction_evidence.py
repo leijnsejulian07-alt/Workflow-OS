@@ -169,7 +169,9 @@ def record_awin_transaction_evidence(
         "evidence_sha256": evidence.evidence_sha256,
         "proves_received_cash": False,
     }
-    event_material = f"awin:{evidence.publisher_id}:{evidence.transaction_id}"
+    event_material = (
+        f"awin:{evidence.publisher_id}:{evidence.transaction_id}:{evidence.status}"
+    )
     event_id = "awin-transaction:" + hashlib.sha256(event_material.encode("utf-8")).hexdigest()
     occurred_at = evidence.validation_at or evidence.transaction_at
     audit_ledger.append_event(

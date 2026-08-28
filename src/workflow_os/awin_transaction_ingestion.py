@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 from .adapters.awin_transaction_http_transport import AwinTransactionFetchResult
 from .audit import AuditRevenueLedger

@@ -54,6 +54,12 @@ class YouTubeUploadRequest:
 
 
 @dataclass(frozen=True)
+class YouTubeUploadStatusProbe:
+    url: str
+    headers: Mapping[str, str]
+
+
+@dataclass(frozen=True)
 class YouTubeStatusRequest:
     url: str
     headers: Mapping[str, str]
@@ -98,10 +104,17 @@ def _validate_session_url(session_url: str) -> str:
         or parsed.username is not None
         or parsed.password is not None
         or parsed.port not in (None, 443)
-        or not parsed.path.startswith("/upload/youtube/v3/videos")
+        or parsed.path != "/upload/youtube/v3/videos"
+        or parsed.fragment
     ):
         raise ValueError("YouTube resumable session URL has an unexpected origin")
     return session_url
+
+
+def _validate_total_size(total_size: int) -> int:
+    if not isinstance(total_size, int) or isinstance(total_size, bool) or total_size <= 0:
+        raise ValueError("total_size must be a positive integer")
+    return total_size
 
 
 def build_resumable_init_request(
@@ -181,15 +194,11 @@ def build_upload_request(
     token = _clean_token(access_token)
     if media_type not in _ALLOWED_VIDEO_MEDIA_TYPES:
         raise ValueError("unsupported YouTube video media type")
-    for name, value in (
-        ("total_size", total_size),
-        ("start_byte", start_byte),
-        ("end_byte", end_byte),
-        ("chunk_size", chunk_size),
-    ):
+    _validate_total_size(total_size)
+    for name, value in (("start_byte", start_byte), ("end_byte", end_byte), ("chunk_size", chunk_size)):
         if not isinstance(value, int) or isinstance(value, bool):
             raise ValueError(f"{name} must be an integer")
-    if total_size <= 0 or start_byte < 0 or end_byte < start_byte or end_byte >= total_size:
+    if start_byte < 0 or end_byte < start_byte or end_byte >= total_size:
         raise ValueError("invalid YouTube resumable byte range")
     if chunk_size <= 0 or chunk_size % _RESUMABLE_CHUNK_GRANULARITY != 0:
         raise ValueError("YouTube resumable chunk size must be a positive multiple of 256 KB")
@@ -211,6 +220,27 @@ def build_upload_request(
         "Content-Range": f"bytes {start_byte}-{end_byte}/{total_size}",
     }
     return YouTubeUploadRequest(url=url, headers=headers, start_byte=start_byte, end_byte=end_byte)
+
+
+def build_upload_status_probe(
+    session_url: str,
+    *,
+    access_token: str,
+    total_size: int,
+) -> YouTubeUploadStatusProbe:
+    """Build the official empty PUT used to reconcile an interrupted resumable upload."""
+
+    url = _validate_session_url(session_url)
+    token = _clean_token(access_token)
+    size = _validate_total_size(total_size)
+    return YouTubeUploadStatusProbe(
+        url=url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Length": "0",
+            "Content-Range": f"bytes */{size}",
+        },
+    )
 
 
 def build_video_status_request(video_id: str, *, access_token: str) -> YouTubeStatusRequest:

@@ -17,6 +17,7 @@ _MAX_DESCRIPTION_BYTES = 5000
 _MAX_TOKEN_CHARS = 4096
 _MAX_SESSION_URL_CHARS = 4096
 _MAX_CATEGORY_ID_CHARS = 16
+_RESUMABLE_CHUNK_GRANULARITY = 256 * 1024
 
 
 @dataclass(frozen=True)
@@ -172,23 +173,41 @@ def build_upload_request(
     total_size: int,
     start_byte: int,
     end_byte: int,
+    chunk_size: int,
 ) -> YouTubeUploadRequest:
-    """Build one bounded resumable PUT request contract without reading the asset."""
+    """Build one deterministic resumable PUT request contract without reading the asset."""
 
     url = _validate_session_url(session_url)
     token = _clean_token(access_token)
     if media_type not in _ALLOWED_VIDEO_MEDIA_TYPES:
         raise ValueError("unsupported YouTube video media type")
-    for name, value in (("total_size", total_size), ("start_byte", start_byte), ("end_byte", end_byte)):
+    for name, value in (
+        ("total_size", total_size),
+        ("start_byte", start_byte),
+        ("end_byte", end_byte),
+        ("chunk_size", chunk_size),
+    ):
         if not isinstance(value, int) or isinstance(value, bool):
             raise ValueError(f"{name} must be an integer")
     if total_size <= 0 or start_byte < 0 or end_byte < start_byte or end_byte >= total_size:
         raise ValueError("invalid YouTube resumable byte range")
+    if chunk_size <= 0 or chunk_size % _RESUMABLE_CHUNK_GRANULARITY != 0:
+        raise ValueError("YouTube resumable chunk size must be a positive multiple of 256 KB")
+    if start_byte % chunk_size != 0:
+        raise ValueError("YouTube resumable chunk start does not match the planned chunk size")
+
+    content_length = end_byte - start_byte + 1
+    is_final_chunk = end_byte == total_size - 1
+    if is_final_chunk:
+        if content_length > chunk_size:
+            raise ValueError("final YouTube resumable chunk exceeds the planned chunk size")
+    elif content_length != chunk_size:
+        raise ValueError("non-final YouTube resumable chunks must use the planned chunk size")
 
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": media_type,
-        "Content-Length": str(end_byte - start_byte + 1),
+        "Content-Length": str(content_length),
         "Content-Range": f"bytes {start_byte}-{end_byte}/{total_size}",
     }
     return YouTubeUploadRequest(url=url, headers=headers, start_byte=start_byte, end_byte=end_byte)

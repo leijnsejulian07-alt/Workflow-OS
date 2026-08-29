@@ -36,6 +36,8 @@ class YouTubeUploadContractTests(unittest.TestCase):
         values = {
             "title": "Owned video",
             "description": "description",
+            "category_id": "22",
+            "category_id_verified": True,
             "privacy_status": "private",
             "self_declared_made_for_kids": False,
             "project_evidence": YouTubeProjectEvidence(
@@ -63,7 +65,22 @@ class YouTubeUploadContractTests(unittest.TestCase):
         self.assertIn("uploadType=resumable", result.url)
         self.assertEqual(result.headers["Authorization"], "Bearer token123")
         self.assertEqual(result.headers["X-Upload-Content-Length"], "8000000")
+        self.assertEqual(result.json_body["snippet"]["categoryId"], "22")
         self.assertEqual(result.json_body["status"]["privacyStatus"], "private")
+
+    def test_category_is_required_and_must_be_verified(self):
+        with self.assertRaisesRegex(ValueError, "category id is not verified"):
+            build_resumable_init_request(
+                self.make_request(),
+                options=self.make_options(category_id_verified=False),
+                access_token="token123",
+            )
+        with self.assertRaisesRegex(ValueError, "category id is malformed"):
+            build_resumable_init_request(
+                self.make_request(),
+                options=self.make_options(category_id="People & Blogs"),
+                access_token="token123",
+            )
 
     def test_account_rights_scope_and_channel_evidence_fail_closed(self):
         with self.assertRaisesRegex(ValueError, "account is not authorized"):

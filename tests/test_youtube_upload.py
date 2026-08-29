@@ -118,31 +118,80 @@ class YouTubeUploadContractTests(unittest.TestCase):
                 "https://evil.example/upload/youtube/v3/videos?upload_id=x",
                 access_token="token123",
                 media_type="video/mp4",
-                total_size=100,
+                total_size=262_144,
                 start_byte=0,
-                end_byte=99,
+                end_byte=262_143,
+                chunk_size=262_144,
             )
         with self.assertRaisesRegex(ValueError, "invalid YouTube resumable byte range"):
             build_upload_request(
                 "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=x",
                 access_token="token123",
                 media_type="video/mp4",
-                total_size=100,
+                total_size=262_144,
                 start_byte=0,
-                end_byte=100,
+                end_byte=262_144,
+                chunk_size=262_144,
             )
 
-    def test_upload_request_has_exact_range_and_no_shell_surface(self):
-        result = build_upload_request(
-            "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=x",
+    def test_upload_request_enforces_official_chunk_granularity_and_sequence_size(self):
+        url = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=x"
+        with self.assertRaisesRegex(ValueError, "multiple of 256 KB"):
+            build_upload_request(
+                url,
+                access_token="token123",
+                media_type="video/mp4",
+                total_size=600_000,
+                start_byte=0,
+                end_byte=199_999,
+                chunk_size=200_000,
+            )
+        with self.assertRaisesRegex(ValueError, "planned chunk size"):
+            build_upload_request(
+                url,
+                access_token="token123",
+                media_type="video/mp4",
+                total_size=800_000,
+                start_byte=262_144,
+                end_byte=524_287,
+                chunk_size=524_288,
+            )
+        with self.assertRaisesRegex(ValueError, "non-final"):
+            build_upload_request(
+                url,
+                access_token="token123",
+                media_type="video/mp4",
+                total_size=800_000,
+                start_byte=0,
+                end_byte=262_143,
+                chunk_size=524_288,
+            )
+
+    def test_upload_request_has_exact_range_and_accepts_smaller_final_chunk(self):
+        url = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=x"
+        first = build_upload_request(
+            url,
             access_token="token123",
             media_type="video/mp4",
-            total_size=100,
-            start_byte=20,
-            end_byte=79,
+            total_size=600_000,
+            start_byte=0,
+            end_byte=262_143,
+            chunk_size=262_144,
         )
-        self.assertEqual(result.headers["Content-Range"], "bytes 20-79/100")
-        self.assertEqual(result.headers["Content-Length"], "60")
+        self.assertEqual(first.headers["Content-Range"], "bytes 0-262143/600000")
+        self.assertEqual(first.headers["Content-Length"], "262144")
+
+        final = build_upload_request(
+            url,
+            access_token="token123",
+            media_type="video/mp4",
+            total_size=600_000,
+            start_byte=524_288,
+            end_byte=599_999,
+            chunk_size=262_144,
+        )
+        self.assertEqual(final.headers["Content-Range"], "bytes 524288-599999/600000")
+        self.assertEqual(final.headers["Content-Length"], "75712")
 
     def test_status_request_uses_official_api_and_bearer_auth(self):
         result = build_video_status_request("abc123", access_token="token123")

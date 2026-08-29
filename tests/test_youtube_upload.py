@@ -5,6 +5,7 @@ from workflow_os.adapters.youtube_upload import (
     YouTubeUploadOptions,
     build_resumable_init_request,
     build_upload_request,
+    build_upload_status_probe,
     build_video_status_request,
 )
 from workflow_os.submissions import SubmissionAsset, SubmissionRequest
@@ -192,6 +193,23 @@ class YouTubeUploadContractTests(unittest.TestCase):
         )
         self.assertEqual(final.headers["Content-Range"], "bytes 524288-599999/600000")
         self.assertEqual(final.headers["Content-Length"], "75712")
+
+    def test_upload_status_probe_is_empty_put_contract_for_recovery(self):
+        url = "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=x"
+        result = build_upload_status_probe(url, access_token="token123", total_size=600_000)
+        self.assertEqual(result.url, url)
+        self.assertEqual(result.headers["Authorization"], "Bearer token123")
+        self.assertEqual(result.headers["Content-Length"], "0")
+        self.assertEqual(result.headers["Content-Range"], "bytes */600000")
+
+        with self.assertRaisesRegex(ValueError, "unexpected origin"):
+            build_upload_status_probe(
+                "https://evil.example/upload/youtube/v3/videos?upload_id=x",
+                access_token="token123",
+                total_size=600_000,
+            )
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            build_upload_status_probe(url, access_token="token123", total_size=0)
 
     def test_status_request_uses_official_api_and_bearer_auth(self):
         result = build_video_status_request("abc123", access_token="token123")

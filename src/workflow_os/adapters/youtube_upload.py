@@ -16,6 +16,7 @@ _MAX_TITLE_CHARS = 100
 _MAX_DESCRIPTION_BYTES = 5000
 _MAX_TOKEN_CHARS = 4096
 _MAX_SESSION_URL_CHARS = 4096
+_MAX_CATEGORY_ID_CHARS = 16
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,8 @@ class YouTubeProjectEvidence:
 class YouTubeUploadOptions:
     title: str
     description: str
+    category_id: str
+    category_id_verified: bool
     privacy_status: str
     self_declared_made_for_kids: bool
     project_evidence: YouTubeProjectEvidence
@@ -71,6 +74,17 @@ def _clean_text(value: str, field: str, maximum: int) -> str:
     if not cleaned or len(cleaned) > maximum:
         raise ValueError(f"{field} is missing or too long")
     return cleaned
+
+
+def _clean_category_id(category_id: str, *, verified: bool) -> str:
+    if not isinstance(verified, bool):
+        raise TypeError("YouTube category verification flag must be boolean")
+    if not verified:
+        raise ValueError("YouTube category id is not verified")
+    value = _clean_text(category_id, "YouTube category id", _MAX_CATEGORY_ID_CHARS)
+    if not value.isascii() or not value.isdigit():
+        raise ValueError("YouTube category id is malformed")
+    return value
 
 
 def _validate_session_url(session_url: str) -> str:
@@ -125,6 +139,7 @@ def build_resumable_init_request(
         raise ValueError("unverified YouTube API projects must fail closed to private")
 
     title = _clean_text(options.title, "YouTube title", _MAX_TITLE_CHARS)
+    category_id = _clean_category_id(options.category_id, verified=options.category_id_verified)
     if not isinstance(options.description, str):
         raise TypeError("YouTube description must be a string")
     description = options.description.strip()
@@ -134,7 +149,7 @@ def build_resumable_init_request(
     token = _clean_token(access_token)
     query = urlencode({"uploadType": "resumable", "part": "snippet,status"})
     body = {
-        "snippet": {"title": title, "description": description},
+        "snippet": {"title": title, "description": description, "categoryId": category_id},
         "status": {
             "privacyStatus": privacy,
             "selfDeclaredMadeForKids": options.self_declared_made_for_kids,

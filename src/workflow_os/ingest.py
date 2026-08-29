@@ -147,6 +147,17 @@ def make_server(service: LocalIngestService, host: str = "127.0.0.1", port: int 
                 self._reply(404, {"error": "not_found"})
                 return
             if not service.authorized(self.headers.get("Authorization")):
+                # Drain only a syntactically valid, already-bounded request body.
+                # Leaving unread bytes on a loopback socket can intermittently
+                # surface as WSAECONNABORTED on Windows before the 401 arrives.
+                if not self.headers.get("Transfer-Encoding"):
+                    raw_length = self.headers.get("Content-Length")
+                    try:
+                        length = int(raw_length) if raw_length is not None else -1
+                    except ValueError:
+                        length = -1
+                    if 0 <= length <= MAX_REQUEST_BYTES:
+                        self.rfile.read(length)
                 self._reply(401, {"error": "unauthorized"})
                 return
             if self.headers.get("Transfer-Encoding"):

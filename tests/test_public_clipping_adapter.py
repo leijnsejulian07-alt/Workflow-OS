@@ -72,8 +72,22 @@ class PublicClippingAdapterTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     normalize_clipping_net_campaign(bad)
 
-    def test_minimum_views_requires_nonnegative_integer(self):
-        for value in (True, -1, 12.5, "1000"):
+    def test_commercial_numbers_are_precision_and_size_bounded(self):
+        for key in ("headline_budget", "remaining_budget", "cpm", "payout_per_1000_views"):
+            for value in (0.001, 1_000_000_000.01, 10**30, float("nan")):
+                with self.subTest(key=key, value=value):
+                    bad = payload("clipping_net")
+                    bad[key] = value
+                    with self.assertRaises(ValueError):
+                        normalize_clipping_net_campaign(bad)
+
+        boundary = payload("clipping_net")
+        boundary["remaining_budget"] = 1_000_000_000
+        record = normalize_clipping_net_campaign(boundary)
+        self.assertEqual(record.fields["remaining_budget"], 1_000_000_000)
+
+    def test_minimum_views_requires_bounded_nonnegative_integer(self):
+        for value in (True, -1, 12.5, "1000", 1_000_000_001):
             with self.subTest(value=value):
                 bad = payload("vues")
                 bad["minimum_views"] = value
@@ -81,9 +95,9 @@ class PublicClippingAdapterTests(unittest.TestCase):
                     normalize_vues_campaign(bad)
 
         valid = payload("vues")
-        valid["minimum_views"] = 1000
+        valid["minimum_views"] = 1_000_000_000
         record = normalize_vues_campaign(valid)
-        self.assertEqual(record.fields["minimum_views"], 1000)
+        self.assertEqual(record.fields["minimum_views"], 1_000_000_000)
 
     def test_rejects_wrong_host_source_or_platform(self):
         wrong_host = payload("vues")

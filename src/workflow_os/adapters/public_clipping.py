@@ -7,13 +7,15 @@ execution.
 """
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
+from decimal import Decimal, InvalidOperation
 
 from .contracts import AccessMode, DiscoveryRecord, SourcePolicy
 from .reward_feed import normalize_reward_record
 
 _EXECUTION_BLOCK_REASON = "official_creator_machine_submission_interface_not_verified"
+_MAX_MONEY_CENTS = 100_000_000_000
+_MAX_MINIMUM_VIEWS = 1_000_000_000
 
 POLICIES = {
     "clipping_net": SourcePolicy(
@@ -34,7 +36,7 @@ POLICIES = {
     ),
 }
 
-_NUMERIC_FIELDS = (
+_MONEY_FIELDS = (
     "headline_budget",
     "remaining_budget",
     "cpm",
@@ -43,15 +45,24 @@ _NUMERIC_FIELDS = (
 _NONNEGATIVE_INTEGER_FIELDS = ("minimum_views",)
 
 
-def _validate_optional_nonnegative_number(payload: Mapping[str, object], key: str) -> None:
+def _validate_optional_bounded_money(payload: Mapping[str, object], key: str) -> None:
     value = payload.get(key)
     if value is None:
         return
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{key} must be numeric when present")
-    number = float(value)
-    if not math.isfinite(number) or number < 0:
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        raise ValueError(f"{key} must be finite and non-negative") from exc
+    if not amount.is_finite() or amount < 0:
         raise ValueError(f"{key} must be finite and non-negative")
+    quantized = amount.quantize(Decimal("0.01"))
+    if quantized != amount:
+        raise ValueError(f"{key} may have at most two decimal places")
+    cents = int(quantized * 100)
+    if cents < 0 or cents > _MAX_MONEY_CENTS:
+        raise ValueError(f"{key} is outside supported bounds")
 
 
 def _validate_optional_nonnegative_integer(payload: Mapping[str, object], key: str) -> None:
@@ -60,6 +71,8 @@ def _validate_optional_nonnegative_integer(payload: Mapping[str, object], key: s
         return
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{key} must be a non-negative integer when present")
+    if value > _MAX_MINIMUM_VIEWS:
+        raise ValueError(f"{key} is outside supported bounds")
 
 
 def normalize_public_clipping_campaign(
@@ -72,8 +85,8 @@ def normalize_public_clipping_campaign(
     if not isinstance(payload, Mapping):
         raise ValueError("public clipping campaign payload must be a mapping")
 
-    for key in _NUMERIC_FIELDS:
-        _validate_optional_nonnegative_number(payload, key)
+    for key in _MONEY_FIELDS:
+        _validate_optional_bounded_money(payload, key)
     for key in _NONNEGATIVE_INTEGER_FIELDS:
         _validate_optional_nonnegative_integer(payload, key)
 

@@ -57,7 +57,10 @@ def _validate_optional_bounded_money(payload: Mapping[str, object], key: str) ->
         raise ValueError(f"{key} must be finite and non-negative") from exc
     if not amount.is_finite() or amount < 0:
         raise ValueError(f"{key} must be finite and non-negative")
-    quantized = amount.quantize(Decimal("0.01"))
+    try:
+        quantized = amount.quantize(Decimal("0.01"))
+    except InvalidOperation as exc:
+        raise ValueError(f"{key} is outside supported bounds") from exc
     if quantized != amount:
         raise ValueError(f"{key} may have at most two decimal places")
     cents = int(quantized * 100)

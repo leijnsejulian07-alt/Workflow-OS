@@ -74,7 +74,7 @@ class PublicClippingAdapterTests(unittest.TestCase):
 
     def test_commercial_numbers_are_precision_and_size_bounded(self):
         for key in ("headline_budget", "remaining_budget", "cpm", "payout_per_1000_views"):
-            for value in (0.001, 1_000_000_000.01, 10**30, float("nan")):
+            for value in (0.001, 1_000_000_000.01, 10**30, 10**1000, float("nan")):
                 with self.subTest(key=key, value=value):
                     bad = payload("clipping_net")
                     bad[key] = value

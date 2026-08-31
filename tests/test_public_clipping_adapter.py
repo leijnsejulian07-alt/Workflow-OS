@@ -86,6 +86,30 @@ class PublicClippingAdapterTests(unittest.TestCase):
         record = normalize_clipping_net_campaign(boundary)
         self.assertEqual(record.fields["remaining_budget"], 1_000_000_000)
 
+    def test_money_fields_require_explicit_valid_currency(self):
+        for value in (None, "usd", "US", "USDD", "U1D", "€UR", 123, True):
+            with self.subTest(currency=value):
+                bad = payload("clipping_net")
+                if value is None:
+                    bad.pop("currency")
+                else:
+                    bad["currency"] = value
+                with self.assertRaises(ValueError):
+                    normalize_clipping_net_campaign(bad)
+
+        valid = payload("clipping_net")
+        valid["currency"] = "EUR"
+        record = normalize_clipping_net_campaign(valid)
+        self.assertEqual(record.fields["currency"], "EUR")
+
+    def test_currency_without_money_is_still_bounded_but_not_inferred(self):
+        candidate = payload("vues")
+        for key in ("headline_budget", "remaining_budget", "cpm", "payout_per_1000_views"):
+            candidate.pop(key, None)
+        candidate.pop("currency")
+        record = normalize_vues_campaign(candidate)
+        self.assertNotIn("currency", record.fields)
+
     def test_minimum_views_requires_bounded_nonnegative_integer(self):
         for value in (True, -1, 12.5, "1000", 1_000_000_001):
             with self.subTest(value=value):

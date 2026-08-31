@@ -68,6 +68,23 @@ def _validate_optional_bounded_money(payload: Mapping[str, object], key: str) ->
         raise ValueError(f"{key} is outside supported bounds")
 
 
+def _validate_currency_binding(payload: Mapping[str, object]) -> None:
+    currency = payload.get("currency")
+    has_money = any(payload.get(key) is not None for key in _MONEY_FIELDS)
+    if currency is None:
+        if has_money:
+            raise ValueError("money fields require explicit currency evidence")
+        return
+    if (
+        not isinstance(currency, str)
+        or len(currency) != 3
+        or not currency.isascii()
+        or not currency.isalpha()
+        or currency != currency.upper()
+    ):
+        raise ValueError("currency must be a three-letter uppercase ASCII code")
+
+
 def _validate_optional_nonnegative_integer(payload: Mapping[str, object], key: str) -> None:
     value = payload.get(key)
     if value is None:
@@ -90,6 +107,7 @@ def normalize_public_clipping_campaign(
 
     for key in _MONEY_FIELDS:
         _validate_optional_bounded_money(payload, key)
+    _validate_currency_binding(payload)
     for key in _NONNEGATIVE_INTEGER_FIELDS:
         _validate_optional_nonnegative_integer(payload, key)
 

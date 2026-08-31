@@ -87,7 +87,7 @@ def _validate_currency_binding(platform: str, payload: Mapping[str, object]) -> 
         or currency != currency.upper()
     ):
         raise ValueError("currency must be a three-letter uppercase ASCII code")
-    if has_money and currency not in _SUPPORTED_MONEY_CURRENCIES[platform]:
+    if currency not in _SUPPORTED_MONEY_CURRENCIES[platform]:
         raise ValueError("currency is not independently verified for this source")
 
 

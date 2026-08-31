@@ -36,6 +36,10 @@ POLICIES = {
     ),
 }
 
+_SUPPORTED_MONEY_CURRENCIES = {
+    "clipping_net": frozenset(),
+    "vues": frozenset({"USD"}),
+}
 _MONEY_FIELDS = (
     "headline_budget",
     "remaining_budget",
@@ -68,7 +72,7 @@ def _validate_optional_bounded_money(payload: Mapping[str, object], key: str) ->
         raise ValueError(f"{key} is outside supported bounds")
 
 
-def _validate_currency_binding(payload: Mapping[str, object]) -> None:
+def _validate_currency_binding(platform: str, payload: Mapping[str, object]) -> None:
     currency = payload.get("currency")
     has_money = any(payload.get(key) is not None for key in _MONEY_FIELDS)
     if currency is None:
@@ -83,6 +87,8 @@ def _validate_currency_binding(payload: Mapping[str, object]) -> None:
         or currency != currency.upper()
     ):
         raise ValueError("currency must be a three-letter uppercase ASCII code")
+    if has_money and currency not in _SUPPORTED_MONEY_CURRENCIES[platform]:
+        raise ValueError("currency is not independently verified for this source")
 
 
 def _validate_optional_nonnegative_integer(payload: Mapping[str, object], key: str) -> None:
@@ -107,7 +113,7 @@ def normalize_public_clipping_campaign(
 
     for key in _MONEY_FIELDS:
         _validate_optional_bounded_money(payload, key)
-    _validate_currency_binding(payload)
+    _validate_currency_binding(platform, payload)
     for key in _NONNEGATIVE_INTEGER_FIELDS:
         _validate_optional_nonnegative_integer(payload, key)
 

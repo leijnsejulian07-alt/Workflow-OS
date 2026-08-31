@@ -131,12 +131,24 @@ class PublicClippingAdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_clipping_net_campaign(clipping_eur)
 
-    def test_currency_without_money_is_still_bounded_but_not_inferred(self):
-        candidate = payload("vues")
+    def test_currency_without_money_must_still_be_source_supported(self):
+        vues_non_money = payload("vues")
         for key in ("headline_budget", "remaining_budget", "cpm", "payout_per_1000_views"):
-            candidate.pop(key, None)
-        candidate.pop("currency")
-        record = normalize_vues_campaign(candidate)
+            vues_non_money.pop(key, None)
+        vues_non_money["currency"] = "ZZZ"
+        with self.assertRaises(ValueError):
+            normalize_vues_campaign(vues_non_money)
+
+        clipping_non_money = clipping_net_non_money_payload()
+        clipping_non_money["currency"] = "USD"
+        with self.assertRaises(ValueError):
+            normalize_clipping_net_campaign(clipping_non_money)
+
+        vues_without_currency = payload("vues")
+        for key in ("headline_budget", "remaining_budget", "cpm", "payout_per_1000_views"):
+            vues_without_currency.pop(key, None)
+        vues_without_currency.pop("currency")
+        record = normalize_vues_campaign(vues_without_currency)
         self.assertNotIn("currency", record.fields)
 
     def test_minimum_views_requires_bounded_nonnegative_integer(self):

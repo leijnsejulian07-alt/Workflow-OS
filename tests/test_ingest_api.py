@@ -5,7 +5,7 @@ import json
 import tempfile
 import threading
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from workflow_os.ingest import LocalIngestService, MAX_REQUEST_BYTES, make_server
@@ -36,7 +36,7 @@ def valid_payload() -> dict:
         "capital_required": 0,
         "source_checked_at": datetime.now(timezone.utc).isoformat(),
         "freshness_ttl_seconds": 86400,
-        "deadline": "2026-08-31T23:59:59+00:00",
+        "deadline": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
         "remaining_budget": 1000,
         "payout_formula": "EUR 100 per approved unit",
         "payout_cap": 1000,

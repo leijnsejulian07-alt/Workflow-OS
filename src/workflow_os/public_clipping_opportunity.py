@@ -1,4 +1,4 @@
-﻿"""Fail-closed bridge from public clipping public discovery into Opportunity Manager input.
+"""Fail-closed bridge from public clipping public discovery into Opportunity Manager input.
 
 Public public clipping campaign discovery is useful for ranking opportunities, but it does
 not prove creator submission authority. This bridge requires independent Workflow
@@ -12,6 +12,7 @@ import math
 import re
 
 from .adapters.contracts import DiscoveryRecord
+from .adapters.public_clipping import POLICIES as PUBLIC_CLIPPING_POLICIES
 from .opportunities import BLOCKED_CATEGORIES
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -83,8 +84,10 @@ def _probability(value: float, name: str) -> float:
 def _verified_discovery(record: DiscoveryRecord) -> None:
     if not isinstance(record, DiscoveryRecord):
         raise TypeError("record must be DiscoveryRecord")
-    if record.source_platform not in {"clipping_net", "vues"}:
+    if record.source_platform not in PUBLIC_CLIPPING_POLICIES:
         raise ValueError("discovery record is not a public clipping record")
+    if not PUBLIC_CLIPPING_POLICIES[record.source_platform].allows_url(record.canonical_url):
+        raise ValueError("canonical_url is outside public clipping source policy")
     if record.fields.get("machine_submission_verified") is not False:
         raise ValueError("public clipping public discovery must not assert machine submission")
     if record.fields.get("payout_receipt_verified") is not False:

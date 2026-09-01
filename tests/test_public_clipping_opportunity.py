@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timezone
+from datetime import datetime, timezone
 import unittest
 
 from workflow_os.adapters.contracts import DiscoveryRecord
@@ -9,14 +9,14 @@ from workflow_os.public_clipping_opportunity import (
 from workflow_os.opportunities import evaluate, normalize
 
 
-class ClipArmyOpportunityTests(unittest.TestCase):
+class PublicClippingOpportunityTests(unittest.TestCase):
     def setUp(self) -> None:
         self.now = datetime(2026, 8, 27, 3, 0, tzinfo=timezone.utc)
         self.record = DiscoveryRecord(
             source_platform="vues",
             campaign_id="campaign-123",
             title="Example campaign",
-            canonical_url="https://cliparmy.nl/campaign/example",
+            canonical_url="https://vues.app/campaign/example",
             observed_at="2026-08-27T02:55:00+00:00",
             raw_evidence_sha256="a" * 64,
             fields={
@@ -92,6 +92,13 @@ class ClipArmyOpportunityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "remaining budget"):
             build_public_clipping_opportunity(self.record, evidence)
 
+    def test_source_platform_must_match_canonical_url_policy(self) -> None:
+        record = DiscoveryRecord(
+            **{**self.record.__dict__, "canonical_url": "https://clipping.net/campaign/example"}
+        )
+        with self.assertRaisesRegex(ValueError, "canonical_url is outside public clipping source policy"):
+            build_public_clipping_opportunity(record, self.evidence)
+
     def test_hostile_discovery_cannot_reenable_execution(self) -> None:
         record = DiscoveryRecord(
             **{
@@ -136,7 +143,7 @@ class ClipArmyOpportunityTests(unittest.TestCase):
             build_public_clipping_opportunity(record, self.evidence)
 
     def test_clipping_net_non_money_discovery_needs_no_fx_guess(self) -> None:
-        record = DiscoveryRecord(**{**self.record.__dict__, "source_platform": "clipping_net"})
+        record = DiscoveryRecord(**{**self.record.__dict__, "source_platform": "clipping_net", "canonical_url": "https://clipping.net/campaign/example"})
         evidence = TrustedPublicClippingCampaignEvidence(
             **{**self.evidence.__dict__, "fx_provenance_verified": False}
         )

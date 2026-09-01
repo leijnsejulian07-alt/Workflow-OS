@@ -36,7 +36,7 @@ class PublicClippingAdapterTests(unittest.TestCase):
     def test_clipping_net_preserves_public_evidence_but_blocks_execution(self):
         record = normalize_clipping_net_campaign(clipping_net_non_money_payload())
         self.assertEqual(record.source_platform, "clipping_net")
-        self.assertEqual(record.fields["title"], "Public clipping campaign")
+        self.assertEqual(record.title, "Public clipping campaign")
         self.assertNotIn("currency", record.fields)
         self.assertFalse(record.fields["machine_submission_verified"])
         self.assertFalse(record.fields["zero_touch_execution_enabled"])

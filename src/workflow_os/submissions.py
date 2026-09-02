@@ -32,6 +32,7 @@ class SubmissionRequest:
     account_authorized: bool
     disclosure_satisfied: bool
     campaign_requirements_verified: bool
+    account_identity: str = ""
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,9 @@ def evaluate_submission(request: SubmissionRequest, *, allowed_destination_hosts
         if len(caption) > _MAX_TEXT:
             raise ValueError("caption exceeds 5000 characters")
         asset = _validate_asset(request.asset)
+        account_identity = ""
+        if request.account_identity:
+            account_identity = _clean_text(request.account_identity, "account_identity", maximum=256)
     except ValueError as exc:
         return SubmissionDecision(False, str(exc), None)
 
@@ -129,5 +133,7 @@ def evaluate_submission(request: SubmissionRequest, *, allowed_destination_hosts
             asset.sha256,
         ]
     ).encode("utf-8")
+    if account_identity:
+        canonical += b"\naccount:" + account_identity.encode("utf-8")
     key = f"submit:{hashlib.sha256(canonical).hexdigest()}"
     return SubmissionDecision(True, "submission evidence verified", key)

@@ -1,4 +1,4 @@
-﻿import tempfile
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -19,6 +19,7 @@ def request(destination_url="https://www.youtube.com/upload"):
         campaign_url="https://www.youtube.com/", destination_url=destination_url,
         caption="Caption", asset=SubmissionAsset(path="video.mp4", media_type="video/mp4", size_bytes=4, sha256=DIGEST),
         rights_verified=True, account_authorized=True, disclosure_satisfied=True, campaign_requirements_verified=True,
+        account_identity="acct-1",
     )
 
 
@@ -26,7 +27,7 @@ def options():
     return YouTubeUploadOptions(
         title="Title", description="Description", category_id="22", category_id_verified=True,
         privacy_status="private", self_declared_made_for_kids=False,
-        project_evidence=YouTubeProjectEvidence(True, True, True),
+        project_evidence=YouTubeProjectEvidence(True, True, True, verified_account_id="acct-1"),
     )
 
 
@@ -81,6 +82,33 @@ class ReservedYouTubeProductionExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "missing from the supplied ledger"):
             execute_reserved_youtube_production_submission(self.prepared, **{**self.kwargs, "ledger": foreign})
         execute_mock.assert_not_called()
+
+    @patch("workflow_os.production_youtube_execution.execute_youtube_upload_with_credential")
+    def test_mismatched_credential_account_fails_before_execution(self, execute_mock):
+        kwargs = {**self.kwargs, "credential_ref": CredentialRef("youtube", "acct-2", "access_token")}
+        with self.assertRaisesRegex(ValueError, "identity binding mismatch"):
+            execute_reserved_youtube_production_submission(self.prepared, **kwargs)
+        execute_mock.assert_not_called()
+
+    @patch("workflow_os.production_youtube_execution.execute_youtube_upload_with_credential")
+    def test_missing_verified_account_identity_fails_before_execution(self, execute_mock):
+        bad_options = YouTubeUploadOptions(
+            title="Title", description="Description", category_id="22", category_id_verified=True,
+            privacy_status="private", self_declared_made_for_kids=False,
+            project_evidence=YouTubeProjectEvidence(True, True, True),
+        )
+        with self.assertRaisesRegex(ValueError, "verified YouTube account identity"):
+            execute_reserved_youtube_production_submission(self.prepared, **{**self.kwargs, "options": bad_options})
+        execute_mock.assert_not_called()
+
+    def test_account_identity_participates_in_reservation_identity(self):
+        other = request()
+        other = SubmissionRequest(**{**other.__dict__, "account_identity": "acct-2"})
+        reservation = reserve_submission(other, allowed_destination_hosts={"www.youtube.com"}, ledger=self.ledger)
+        self.assertNotEqual(
+            self.prepared.reservation.decision.idempotency_key,
+            reservation.decision.idempotency_key,
+        )
 
 
 if __name__ == "__main__":

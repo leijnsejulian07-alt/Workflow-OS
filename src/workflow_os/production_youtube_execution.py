@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable
@@ -14,6 +14,21 @@ from workflow_os.side_effects import SideEffectLedger, SideEffectRecord
 from workflow_os.submission_execution import execute_reserved_submission
 
 _YOUTUBE_DESTINATION_HOSTS = frozenset({"www.youtube.com", "youtube.com"})
+_MAX_YOUTUBE_ACCOUNT_ID_CHARS = 256
+
+
+def _clean_account_identity(value: str, field: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field} must be a string")
+    cleaned = value.strip()
+    if (
+        not cleaned
+        or len(cleaned) > _MAX_YOUTUBE_ACCOUNT_ID_CHARS
+        or any(ch.isspace() for ch in cleaned)
+        or any(ord(ch) < 33 or ord(ch) == 127 for ch in cleaned)
+    ):
+        raise ValueError(f"{field} is missing or malformed")
+    return cleaned
 
 
 def execute_reserved_youtube_production_submission(
@@ -34,6 +49,18 @@ def execute_reserved_youtube_production_submission(
         raise TypeError("prepared must be PreparedProductionSubmission")
     if not isinstance(ledger, SideEffectLedger):
         raise TypeError("ledger must be SideEffectLedger")
+
+    verified_account_id = _clean_account_identity(
+        options.project_evidence.verified_account_id, "verified YouTube account identity"
+    )
+    request_account_id = _clean_account_identity(
+        prepared.request.account_identity, "reserved YouTube account identity"
+    )
+    credential_account_id = _clean_account_identity(
+        credential_ref.account_id, "YouTube credential account identity"
+    )
+    if len({verified_account_id, request_account_id, credential_account_id}) != 1:
+        raise ValueError("YouTube account identity binding mismatch")
 
     side_effect = prepared.reservation.side_effect
     if not prepared.reservation.decision.allowed or side_effect is None:

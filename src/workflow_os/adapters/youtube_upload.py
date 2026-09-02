@@ -25,6 +25,7 @@ class YouTubeProjectEvidence:
     api_project_verified: bool
     owned_channel_verified: bool
     upload_scope_verified: bool
+    verified_account_id: str = ""
 
 
 @dataclass(frozen=True)

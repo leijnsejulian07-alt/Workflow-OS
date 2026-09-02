@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, OpenerDirector, Request, build_opener
 
 from .youtube_upload import (
+    YouTubeChannelIdentityRequest,
     YouTubeInitRequest,
     YouTubeStatusRequest,
     YouTubeUploadRequest,
@@ -22,6 +23,8 @@ _MAX_SESSION_URL_CHARS = 4096
 _ALLOWED_HOST = "www.googleapis.com"
 _ALLOWED_UPLOAD_PATH = "/upload/youtube/v3/videos"
 _ALLOWED_STATUS_PATH = "/youtube/v3/videos"
+_ALLOWED_CHANNELS_PATH = "/youtube/v3/channels"
+_MAX_CHANNEL_ID_CHARS = 256
 
 
 class YouTubeHttpTransportError(RuntimeError):
@@ -205,6 +208,38 @@ class YouTubeHttpTransport:
             accepted_statuses=frozenset({200, 201, 308}),
             allow_http_error_statuses=frozenset({308, 404}),
         )
+
+
+    def fetch_authenticated_channel_identity(self, identity_request: YouTubeChannelIdentityRequest) -> str:
+        if not isinstance(identity_request, YouTubeChannelIdentityRequest):
+            raise TypeError("identity_request must be YouTubeChannelIdentityRequest")
+        url = _validated_google_url(identity_request.url, expected_path=_ALLOWED_CHANNELS_PATH)
+        request = Request(
+            url,
+            headers={**dict(identity_request.headers), "Accept": "application/json"},
+            method="GET",
+        )
+        response = self._open(
+            request,
+            body_limit=_MAX_JSON_BODY_BYTES,
+            accepted_statuses=frozenset({200}),
+        )
+        payload = _json_object(response.body)
+        items = payload.get("items")
+        if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], Mapping):
+            raise YouTubeHttpTransportError("YouTube authenticated channel identity is ambiguous")
+        channel_id = items[0].get("id")
+        if not isinstance(channel_id, str):
+            raise YouTubeHttpTransportError("YouTube authenticated channel identity is malformed")
+        value = channel_id.strip()
+        if (
+            not value
+            or len(value) > _MAX_CHANNEL_ID_CHARS
+            or any(ch.isspace() for ch in value)
+            or any(ord(ch) < 33 or ord(ch) == 127 for ch in value)
+        ):
+            raise YouTubeHttpTransportError("YouTube authenticated channel identity is malformed")
+        return value
 
     def fetch_processing(self, status_request: YouTubeStatusRequest) -> Mapping[str, object]:
         if not isinstance(status_request, YouTubeStatusRequest):

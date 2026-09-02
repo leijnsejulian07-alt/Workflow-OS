@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Callable
 
 from workflow_os.adapters.youtube_http_transport import YouTubeHttpTransport
-from workflow_os.adapters.youtube_upload import YouTubeUploadOptions
+from workflow_os.adapters.youtube_upload import YouTubeUploadOptions, build_channel_identity_request
 from workflow_os.adapters.youtube_upload_execution import YouTubePollingPolicy, execute_youtube_upload_attempt
 from workflow_os.credentials import CredentialProvider, CredentialRef, lease_credential
 from workflow_os.submission_execution import SubmissionAttemptResult
@@ -32,10 +32,16 @@ def execute_youtube_upload_with_credential(
         raise ValueError("YouTube execution requires an access_token credential")
 
     lease = lease_credential(credential_provider, credential_ref)
+    access_token = lease.reveal()
+    authenticated_account_id = transport.fetch_authenticated_channel_identity(
+        build_channel_identity_request(access_token=access_token)
+    )
+    if authenticated_account_id != credential_ref.account_id:
+        raise ValueError("leased YouTube credential identity mismatch")
     return execute_youtube_upload_attempt(
         request,
         options=options,
-        access_token=lease.reveal(),
+        access_token=access_token,
         asset_root=asset_root,
         transport=transport,
         polling=polling,

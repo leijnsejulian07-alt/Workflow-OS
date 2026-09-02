@@ -7,6 +7,7 @@ from urllib.error import HTTPError
 from urllib.request import Request
 
 from workflow_os.adapters.youtube_upload import (
+    YouTubeChannelIdentityRequest,
     YouTubeInitRequest,
     YouTubeStatusRequest,
     YouTubeUploadRequest,
@@ -123,6 +124,54 @@ class YouTubeHttpTransportTests(unittest.TestCase):
             )
         )
         self.assertEqual(result.status_code, 404)
+
+
+    def test_fetch_authenticated_channel_identity_requires_exactly_one_item(self):
+        opener = _Opener(_Response(200, b'{"items":[{"id":"acct-1"}]}'))
+        result = YouTubeHttpTransport(opener=opener).fetch_authenticated_channel_identity(
+            YouTubeChannelIdentityRequest(
+                url="https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true&maxResults=2",
+                headers={"Authorization": "Bearer secret-token"},
+            )
+        )
+        self.assertEqual(result, "acct-1")
+        sent, _ = opener.requests[0]
+        self.assertEqual(sent.get_method(), "GET")
+        self.assertEqual(sent.get_header("Authorization"), "Bearer secret-token")
+        self.assertNotIn("secret-token", sent.full_url)
+
+    def test_fetch_authenticated_channel_identity_rejects_empty_multiple_and_malformed(self):
+        payloads = [
+            b'{"items":[]}',
+            b'{"items":[{"id":"acct-1"},{"id":"acct-2"}]}',
+            b'{"items":[{"id":"bad identity"}]}',
+            b'{"items":[{}]}',
+        ]
+        identity_request = YouTubeChannelIdentityRequest(
+            url="https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true&maxResults=2",
+            headers={"Authorization": "Bearer secret-token"},
+        )
+        for body in payloads:
+            with self.subTest(body=body):
+                with self.assertRaises(YouTubeHttpTransportError) as ctx:
+                    YouTubeHttpTransport(opener=_Opener(_Response(200, body))).fetch_authenticated_channel_identity(
+                        identity_request
+                    )
+                self.assertNotIn("secret-token", str(ctx.exception))
+
+    def test_fetch_authenticated_channel_identity_rejects_403_without_exposing_secret(self):
+        error = HTTPError(
+            "https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true",
+            403, "Forbidden", {}, io.BytesIO(b"secret-token"),
+        )
+        with self.assertRaisesRegex(YouTubeHttpTransportError, "HTTP 403") as ctx:
+            YouTubeHttpTransport(opener=_Opener(error=error)).fetch_authenticated_channel_identity(
+                YouTubeChannelIdentityRequest(
+                    url="https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true",
+                    headers={"Authorization": "Bearer secret-token"},
+                )
+            )
+        self.assertNotIn("secret-token", str(ctx.exception))
 
     def test_fetch_processing_returns_only_object_json(self):
         opener = _Opener(_Response(200, b'{"items":[{"id":"abc"}]}'))

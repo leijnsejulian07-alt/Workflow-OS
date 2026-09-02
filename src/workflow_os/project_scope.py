@@ -25,6 +25,12 @@ def _clean_repo_scope(value: str) -> str:
     return value
 
 
+def _clean_epoch(value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("invalid state_epoch")
+    return value
+
+
 @dataclass(frozen=True)
 class ProjectScope:
     chat_id: str
@@ -43,23 +49,53 @@ class ProjectScope:
 
 
 @dataclass(frozen=True)
+class ScopedAccessContext:
+    """Current authoritative Captain scope plus its revocation epoch."""
+
+    scope: ProjectScope
+    state_epoch: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.scope, ProjectScope):
+            raise ValueError("explicit ProjectScope required")
+        object.__setattr__(self, "state_epoch", _clean_epoch(self.state_epoch))
+
+
+@dataclass(frozen=True)
 class ScopedResourceRef:
     resource_kind: str
     resource_id: str
     scope_digest: str
+    state_epoch: int
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "resource_kind", _clean_id(self.resource_kind, "resource_kind"))
         object.__setattr__(self, "resource_id", _clean_id(self.resource_id, "resource_id"))
         if not isinstance(self.scope_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", self.scope_digest):
             raise ValueError("invalid scope_digest")
+        object.__setattr__(self, "state_epoch", _clean_epoch(self.state_epoch))
 
     @classmethod
-    def bind(cls, *, scope: ProjectScope, resource_kind: str, resource_id: str) -> "ScopedResourceRef":
-        return cls(resource_kind=resource_kind, resource_id=resource_id, scope_digest=scope.digest)
+    def bind(
+        cls,
+        *,
+        context: ScopedAccessContext,
+        resource_kind: str,
+        resource_id: str,
+    ) -> "ScopedResourceRef":
+        if not isinstance(context, ScopedAccessContext):
+            raise ValueError("explicit ScopedAccessContext required")
+        return cls(
+            resource_kind=resource_kind,
+            resource_id=resource_id,
+            scope_digest=context.scope.digest,
+            state_epoch=context.state_epoch,
+        )
 
-    def require_scope(self, scope: ProjectScope) -> None:
-        if not isinstance(scope, ProjectScope):
-            raise ScopeMismatchError("explicit ProjectScope required")
-        if not hmac.compare_digest(self.scope_digest, scope.digest):
+    def require_context(self, context: ScopedAccessContext) -> None:
+        if not isinstance(context, ScopedAccessContext):
+            raise ScopeMismatchError("explicit ScopedAccessContext required")
+        if not hmac.compare_digest(self.scope_digest, context.scope.digest):
             raise ScopeMismatchError("resource belongs to a different Captain scope")
+        if self.state_epoch != context.state_epoch:
+            raise ScopeMismatchError("resource belongs to a stale or future Project State epoch")

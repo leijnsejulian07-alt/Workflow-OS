@@ -9,6 +9,7 @@ from workflow_os.submissions import SubmissionRequest
 
 YOUTUBE_UPLOAD_INIT_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 YOUTUBE_VIDEO_STATUS_URL = "https://www.googleapis.com/youtube/v3/videos"
+YOUTUBE_CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
 YOUTUBE_UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
 _ALLOWED_VIDEO_MEDIA_TYPES = frozenset({"video/mp4", "video/webm"})
 _ALLOWED_PRIVACY = frozenset({"private", "unlisted", "public"})
@@ -62,6 +63,12 @@ class YouTubeUploadStatusProbe:
 
 @dataclass(frozen=True)
 class YouTubeStatusRequest:
+    url: str
+    headers: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class YouTubeChannelIdentityRequest:
     url: str
     headers: Mapping[str, str]
 
@@ -254,5 +261,16 @@ def build_video_status_request(video_id: str, *, access_token: str) -> YouTubeSt
     query = urlencode({"part": "status,processingDetails", "id": value})
     return YouTubeStatusRequest(
         url=f"{YOUTUBE_VIDEO_STATUS_URL}?{query}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def build_channel_identity_request(*, access_token: str) -> YouTubeChannelIdentityRequest:
+    """Build a read-only authenticated channel identity request without I/O."""
+
+    token = _clean_token(access_token)
+    query = urlencode({"part": "snippet", "mine": "true", "maxResults": "2"})
+    return YouTubeChannelIdentityRequest(
+        url=f"{YOUTUBE_CHANNELS_URL}?{query}",
         headers={"Authorization": f"Bearer {token}"},
     )

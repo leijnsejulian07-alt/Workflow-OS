@@ -94,6 +94,25 @@ def test_success_with_mismatched_client_order_identity_is_unknown() -> None:
     assert result.external_reference is None
 
 
+def test_success_with_unbounded_or_control_character_external_reference_is_unknown() -> None:
+    for external_reference in ("x" * 257, "alpaca\norder"):
+        result = submit_paper_order(
+            credentials=_creds(),
+            order=_order(),
+            request_fn=lambda request, timeout, external_reference=external_reference: _json_result(
+                200,
+                json.dumps(
+                    {
+                        "id": external_reference,
+                        "client_order_id": "workflow-os:test:001",
+                    }
+                ).encode(),
+            ),
+        )
+        assert result.outcome == "UNKNOWN"
+        assert result.external_reference is None
+
+
 def test_success_with_unexpected_or_missing_mime_is_unknown() -> None:
     body = b'{"id":"alpaca-order-123","client_order_id":"workflow-os:test:001"}'
     for content_type in (None, "text/html", "text/plain", "application/octet-stream"):
@@ -158,6 +177,25 @@ def test_reconcile_finds_applied_order_by_exact_client_order_id() -> None:
     assert captured["url"].startswith(
         f"{ALPACA_PAPER_BASE_URL}/v2/orders:by_client_order_id?"
     )
+
+
+def test_reconcile_unbounded_or_control_character_external_reference_remains_unknown() -> None:
+    for external_reference in ("x" * 257, "alpaca\torder"):
+        result = reconcile_paper_order(
+            credentials=_creds(),
+            client_order_id="workflow-os:test:001",
+            request_fn=lambda request, timeout, external_reference=external_reference: _json_result(
+                200,
+                json.dumps(
+                    {
+                        "id": external_reference,
+                        "client_order_id": "workflow-os:test:001",
+                    }
+                ).encode(),
+            ),
+        )
+        assert result.outcome == "STILL_UNKNOWN"
+        assert result.external_reference is None
 
 
 def test_reconcile_unexpected_or_missing_mime_remains_unknown() -> None:

@@ -39,6 +39,15 @@ class AlpacaPaperCredentials:
                 raise ValueError(f"paper {name} is invalid")
 
 
+def _validated_client_order_id(value: Any) -> str:
+    normalized = value.strip() if isinstance(value, str) else ""
+    if not normalized or len(normalized) > 128:
+        raise ValueError("client_order_id is required and must be <= 128 characters")
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in normalized):
+        raise ValueError("client_order_id contains control characters")
+    return normalized
+
+
 @dataclass(frozen=True)
 class AlpacaPaperOrder:
     client_order_id: str
@@ -49,14 +58,12 @@ class AlpacaPaperOrder:
     time_in_force: str = "day"
 
     def __post_init__(self) -> None:
-        client_order_id = self.client_order_id.strip() if isinstance(self.client_order_id, str) else ""
+        _validated_client_order_id(self.client_order_id)
         symbol = self.symbol.strip().upper() if isinstance(self.symbol, str) else ""
         qty = self.qty.strip() if isinstance(self.qty, str) else ""
         side = self.side.strip().lower() if isinstance(self.side, str) else ""
         order_type = self.order_type.strip().lower() if isinstance(self.order_type, str) else ""
         tif = self.time_in_force.strip().lower() if isinstance(self.time_in_force, str) else ""
-        if not client_order_id or len(client_order_id) > 128:
-            raise ValueError("client_order_id is required and must be <= 128 characters")
         if not symbol or len(symbol) > 32 or any(ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-/" for ch in symbol):
             raise ValueError("symbol is invalid")
         if not qty or len(qty) > _MAX_QTY_CHARS:
@@ -204,13 +211,14 @@ def submit_paper_order(
 
     root = _validate_base_url(base_url)
     timeout_seconds = _validate_timeout_seconds(timeout_seconds)
+    client_order_id = _validated_client_order_id(order.client_order_id)
     payload = {
         "symbol": order.symbol.strip().upper(),
         "qty": order.qty.strip(),
         "side": order.side.strip().lower(),
         "type": "market",
         "time_in_force": "day",
-        "client_order_id": order.client_order_id.strip(),
+        "client_order_id": client_order_id,
     }
     request = Request(
         f"{root}/v2/orders",
@@ -232,7 +240,7 @@ def submit_paper_order(
             return TradingOrderAttemptResult("UNKNOWN")
         external_id = _bounded_external_reference(parsed.get("id"))
         returned_client_id = parsed.get("client_order_id")
-        if external_id is not None and returned_client_id == order.client_order_id.strip():
+        if external_id is not None and returned_client_id == client_order_id:
             return TradingOrderAttemptResult("APPLIED", external_id)
         return TradingOrderAttemptResult("UNKNOWN")
 
@@ -253,9 +261,7 @@ def reconcile_paper_order(
 
     root = _validate_base_url(base_url)
     timeout_seconds = _validate_timeout_seconds(timeout_seconds)
-    key = client_order_id.strip() if isinstance(client_order_id, str) else ""
-    if not key or len(key) > 128:
-        raise ValueError("client_order_id is required and must be <= 128 characters")
+    key = _validated_client_order_id(client_order_id)
     query = urlencode({"client_order_id": key})
     request = Request(
         f"{root}/v2/orders:by_client_order_id?{query}",

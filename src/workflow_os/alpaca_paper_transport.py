@@ -35,6 +35,8 @@ class AlpacaPaperCredentials:
         for name, value in (("key_id", self.key_id), ("secret_key", self.secret_key)):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"paper {name} is required")
+            if value != value.strip():
+                raise ValueError(f"paper {name} must not contain surrounding whitespace")
             if len(value) > _MAX_CREDENTIAL_CHARS or any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
                 raise ValueError(f"paper {name} is invalid")
 
@@ -202,8 +204,8 @@ def _bounded_external_reference(value: Any) -> str | None:
 
 def _headers(credentials: AlpacaPaperCredentials) -> dict[str, str]:
     return {
-        "APCA-API-KEY-ID": credentials.key_id.strip(),
-        "APCA-API-SECRET-KEY": credentials.secret_key.strip(),
+        "APCA-API-KEY-ID": credentials.key_id,
+        "APCA-API-SECRET-KEY": credentials.secret_key,
         "Accept": "application/json",
         "Content-Type": "application/json",
         "User-Agent": "Workflow-OS/AlpacaPaperTransport",

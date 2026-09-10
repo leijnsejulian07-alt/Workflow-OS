@@ -100,8 +100,8 @@ def test_explicit_client_rejection_is_not_applied() -> None:
     assert result.outcome == "NOT_APPLIED"
 
 
-@pytest.mark.parametrize("status", [429, 500, 502, 301, 302])
-def test_retryable_server_or_redirect_status_is_unknown(status: int) -> None:
+@pytest.mark.parametrize("status", [408, 409, 429, 500, 502, 301, 302])
+def test_ambiguous_server_conflict_timeout_or_redirect_status_is_unknown(status: int) -> None:
     result = submit_paper_order(
         credentials=_creds(),
         order=_order(),

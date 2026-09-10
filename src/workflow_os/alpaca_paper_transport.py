@@ -143,8 +143,9 @@ def submit_paper_order(
     """Submit one strict paper-only market/day order through Alpaca's official endpoint.
 
     2xx is accepted only when Alpaca returns both a stable order id and the exact
-    client_order_id. Explicit 4xx rejection is NOT_APPLIED. Timeouts, redirects,
-    429/5xx, malformed responses, or identity mismatches are UNKNOWN so callers
+    client_order_id. Explicit 4xx rejection is NOT_APPLIED only when the status
+    itself proves the request was rejected. Timeouts, redirects, 408/409/429,
+    5xx, malformed responses, or identity mismatches are UNKNOWN so callers
     must reconcile instead of blindly retrying.
     """
 
@@ -183,7 +184,7 @@ def submit_paper_order(
             return TradingOrderAttemptResult("APPLIED", external_id.strip())
         return TradingOrderAttemptResult("UNKNOWN")
 
-    if 400 <= result.status < 500 and result.status != 429:
+    if 400 <= result.status < 500 and result.status not in {408, 409, 429}:
         return TradingOrderAttemptResult("NOT_APPLIED")
     return TradingOrderAttemptResult("UNKNOWN")
 

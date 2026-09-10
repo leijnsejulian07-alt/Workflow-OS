@@ -88,6 +88,15 @@ def _validate_base_url(base_url: str) -> str:
     return base_url
 
 
+def _validate_timeout_seconds(timeout_seconds: float) -> float:
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
+        raise ValueError("timeout_seconds must be numeric")
+    value = float(timeout_seconds)
+    if value <= 0 or value > 30 or value != value or value in {float("inf"), float("-inf")}:
+        raise ValueError("timeout_seconds must be finite, > 0 and <= 30")
+    return value
+
+
 def _read_bounded(response: Any) -> bytes:
     body = response.read(_MAX_RESPONSE_BYTES + 1)
     if len(body) > _MAX_RESPONSE_BYTES:
@@ -96,8 +105,7 @@ def _read_bounded(response: Any) -> bytes:
 
 
 def _default_request(request: Request, timeout_seconds: float) -> _HttpResult:
-    if timeout_seconds <= 0 or timeout_seconds > 30:
-        raise ValueError("timeout_seconds must be > 0 and <= 30")
+    timeout_seconds = _validate_timeout_seconds(timeout_seconds)
     opener = build_opener(_NoRedirect())
     try:
         with opener.open(request, timeout=timeout_seconds) as response:
@@ -172,6 +180,7 @@ def submit_paper_order(
     """
 
     root = _validate_base_url(base_url)
+    timeout_seconds = _validate_timeout_seconds(timeout_seconds)
     payload = {
         "symbol": order.symbol.strip().upper(),
         "qty": order.qty.strip(),
@@ -220,6 +229,7 @@ def reconcile_paper_order(
     """Reconcile by Alpaca client_order_id without dispatching another order."""
 
     root = _validate_base_url(base_url)
+    timeout_seconds = _validate_timeout_seconds(timeout_seconds)
     key = client_order_id.strip() if isinstance(client_order_id, str) else ""
     if not key or len(key) > 128:
         raise ValueError("client_order_id is required and must be <= 128 characters")

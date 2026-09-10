@@ -78,6 +78,7 @@ class _HttpResult:
     status: int
     body: bytes
     request_id: str | None
+    content_type: str | None = None
 
 
 def _validate_base_url(base_url: str) -> str:
@@ -103,13 +104,22 @@ def _default_request(request: Request, timeout_seconds: float) -> _HttpResult:
                 status=int(response.status),
                 body=_read_bounded(response),
                 request_id=response.headers.get("X-Request-ID"),
+                content_type=response.headers.get("Content-Type"),
             )
     except HTTPError as exc:
         return _HttpResult(
             status=int(exc.code),
             body=_read_bounded(exc),
             request_id=exc.headers.get("X-Request-ID") if exc.headers else None,
+            content_type=exc.headers.get("Content-Type") if exc.headers else None,
         )
+
+
+def _is_json_content_type(content_type: str | None) -> bool:
+    if not isinstance(content_type, str):
+        return False
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    return media_type in {"application/json", "application/problem+json"}
 
 
 def _json_object(body: bytes) -> dict[str, Any]:
@@ -142,11 +152,11 @@ def submit_paper_order(
 ) -> TradingOrderAttemptResult:
     """Submit one strict paper-only market/day order through Alpaca's official endpoint.
 
-    2xx is accepted only when Alpaca returns both a stable order id and the exact
-    client_order_id. Explicit 4xx rejection is NOT_APPLIED only when the status
-    itself proves the request was rejected. Timeouts, redirects, 408/409/429,
-    5xx, malformed responses, or identity mismatches are UNKNOWN so callers
-    must reconcile instead of blindly retrying.
+    2xx is accepted only when Alpaca returns JSON with both a stable order id and
+    the exact client_order_id. Explicit 4xx rejection is NOT_APPLIED only when
+    the status itself proves the request was rejected. Timeouts, redirects,
+    408/409/429, 5xx, malformed or unexpected-MIME responses, or identity
+    mismatches are UNKNOWN so callers must reconcile instead of blindly retrying.
     """
 
     root = _validate_base_url(base_url)
@@ -170,6 +180,8 @@ def submit_paper_order(
         return TradingOrderAttemptResult("UNKNOWN")
 
     if 200 <= result.status < 300:
+        if not _is_json_content_type(result.content_type):
+            return TradingOrderAttemptResult("UNKNOWN")
         try:
             parsed = _json_object(result.body)
         except ValueError:
@@ -215,6 +227,8 @@ def reconcile_paper_order(
         return TradingOrderReconciliationResult("STILL_UNKNOWN")
 
     if result.status == 200:
+        if not _is_json_content_type(result.content_type):
+            return TradingOrderReconciliationResult("STILL_UNKNOWN")
         try:
             parsed = _json_object(result.body)
         except ValueError:

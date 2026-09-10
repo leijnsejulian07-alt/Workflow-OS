@@ -35,7 +35,7 @@ class AlpacaPaperCredentials:
         for name, value in (("key_id", self.key_id), ("secret_key", self.secret_key)):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"paper {name} is required")
-            if len(value) > _MAX_CREDENTIAL_CHARS or "\r" in value or "\n" in value:
+            if len(value) > _MAX_CREDENTIAL_CHARS or any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
                 raise ValueError(f"paper {name} is invalid")
 
 

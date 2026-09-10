@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import socket
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -15,6 +15,8 @@ from .trading_order_execution import (
 
 ALPACA_PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 _MAX_RESPONSE_BYTES = 256 * 1024
+_MAX_CREDENTIAL_CHARS = 512
+_MAX_QTY_CHARS = 64
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -24,14 +26,15 @@ class _NoRedirect(HTTPRedirectHandler):
 
 @dataclass(frozen=True)
 class AlpacaPaperCredentials:
-    key_id: str
-    secret_key: str
+    key_id: str = field(repr=False)
+    secret_key: str = field(repr=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.key_id, str) or not self.key_id.strip():
-            raise ValueError("paper key_id is required")
-        if not isinstance(self.secret_key, str) or not self.secret_key.strip():
-            raise ValueError("paper secret_key is required")
+        for name, value in (("key_id", self.key_id), ("secret_key", self.secret_key)):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"paper {name} is required")
+            if len(value) > _MAX_CREDENTIAL_CHARS or "\r" in value or "\n" in value:
+                raise ValueError(f"paper {name} is invalid")
 
 
 @dataclass(frozen=True)
@@ -54,6 +57,8 @@ class AlpacaPaperOrder:
             raise ValueError("client_order_id is required and must be <= 128 characters")
         if not symbol or len(symbol) > 32 or any(ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-/" for ch in symbol):
             raise ValueError("symbol is invalid")
+        if not qty or len(qty) > _MAX_QTY_CHARS:
+            raise ValueError("qty is required and bounded")
         try:
             qty_number = float(qty)
         except (TypeError, ValueError) as exc:

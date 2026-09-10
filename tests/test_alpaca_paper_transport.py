@@ -28,13 +28,17 @@ def _order() -> AlpacaPaperOrder:
     )
 
 
+def _json_result(status: int, body: bytes, request_id: str | None = None) -> _HttpResult:
+    return _HttpResult(status, body, request_id, "application/json; charset=utf-8")
+
+
 def test_live_endpoint_is_impossible_to_select() -> None:
     with pytest.raises(ValueError, match="exact Alpaca paper"):
         submit_paper_order(
             credentials=_creds(),
             order=_order(),
             base_url="https://api.alpaca.markets",
-            request_fn=lambda request, timeout: _HttpResult(200, b"{}", None),
+            request_fn=lambda request, timeout: _json_result(200, b"{}"),
         )
 
 
@@ -54,7 +58,7 @@ def test_submit_uses_official_paper_endpoint_and_client_order_id() -> None:
     def request_fn(request, timeout):
         captured["url"] = request.full_url
         captured["body"] = json.loads(request.data.decode("utf-8"))
-        return _HttpResult(
+        return _json_result(
             200,
             json.dumps(
                 {"id": "alpaca-order-123", "client_order_id": "workflow-os:test:001"}
@@ -81,21 +85,33 @@ def test_success_with_mismatched_client_order_identity_is_unknown() -> None:
     result = submit_paper_order(
         credentials=_creds(),
         order=_order(),
-        request_fn=lambda request, timeout: _HttpResult(
+        request_fn=lambda request, timeout: _json_result(
             200,
             b'{"id":"alpaca-order-123","client_order_id":"different"}',
-            None,
         ),
     )
     assert result.outcome == "UNKNOWN"
     assert result.external_reference is None
 
 
+def test_success_with_unexpected_or_missing_mime_is_unknown() -> None:
+    body = b'{"id":"alpaca-order-123","client_order_id":"workflow-os:test:001"}'
+    for content_type in (None, "text/html", "text/plain", "application/octet-stream"):
+        result = submit_paper_order(
+            credentials=_creds(),
+            order=_order(),
+            request_fn=lambda request, timeout, mime=content_type: _HttpResult(
+                200, body, None, mime
+            ),
+        )
+        assert result.outcome == "UNKNOWN"
+
+
 def test_explicit_client_rejection_is_not_applied() -> None:
     result = submit_paper_order(
         credentials=_creds(),
         order=_order(),
-        request_fn=lambda request, timeout: _HttpResult(422, b'{"message":"rejected"}', None),
+        request_fn=lambda request, timeout: _json_result(422, b'{"message":"rejected"}'),
     )
     assert result.outcome == "NOT_APPLIED"
 
@@ -105,7 +121,7 @@ def test_ambiguous_server_conflict_timeout_or_redirect_status_is_unknown(status:
     result = submit_paper_order(
         credentials=_creds(),
         order=_order(),
-        request_fn=lambda request, timeout: _HttpResult(status, b"{}", None),
+        request_fn=lambda request, timeout: _json_result(status, b"{}"),
     )
     assert result.outcome == "UNKNOWN"
 
@@ -127,10 +143,9 @@ def test_reconcile_finds_applied_order_by_exact_client_order_id() -> None:
 
     def request_fn(request, timeout):
         captured["url"] = request.full_url
-        return _HttpResult(
+        return _json_result(
             200,
             b'{"id":"alpaca-order-123","client_order_id":"workflow-os:test:001"}',
-            None,
         )
 
     result = reconcile_paper_order(
@@ -145,11 +160,24 @@ def test_reconcile_finds_applied_order_by_exact_client_order_id() -> None:
     )
 
 
+def test_reconcile_unexpected_or_missing_mime_remains_unknown() -> None:
+    body = b'{"id":"alpaca-order-123","client_order_id":"workflow-os:test:001"}'
+    for content_type in (None, "text/html", "text/plain", "application/octet-stream"):
+        result = reconcile_paper_order(
+            credentials=_creds(),
+            client_order_id="workflow-os:test:001",
+            request_fn=lambda request, timeout, mime=content_type: _HttpResult(
+                200, body, None, mime
+            ),
+        )
+        assert result.outcome == "STILL_UNKNOWN"
+
+
 def test_reconcile_lookup_miss_remains_unknown_fail_closed() -> None:
     result = reconcile_paper_order(
         credentials=_creds(),
         client_order_id="workflow-os:test:001",
-        request_fn=lambda request, timeout: _HttpResult(404, b'{"message":"not found"}', None),
+        request_fn=lambda request, timeout: _json_result(404, b'{"message":"not found"}'),
     )
     assert result.outcome == "STILL_UNKNOWN"
 

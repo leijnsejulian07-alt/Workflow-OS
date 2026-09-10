@@ -42,8 +42,12 @@ class AlpacaPaperCredentials:
 
 
 def _validated_client_order_id(value: Any) -> str:
-    normalized = value.strip() if isinstance(value, str) else ""
-    if not normalized or len(normalized) > 128:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("client_order_id is required and must be <= 128 characters")
+    normalized = value.strip()
+    if value != normalized:
+        raise ValueError("client_order_id must not contain surrounding whitespace")
+    if len(normalized) > 128:
         raise ValueError("client_order_id is required and must be <= 128 characters")
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in normalized):
         raise ValueError("client_order_id contains control characters")

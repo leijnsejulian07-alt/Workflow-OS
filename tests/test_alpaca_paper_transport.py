@@ -157,6 +157,33 @@ def test_transport_exception_after_dispatch_is_unknown() -> None:
     assert result.outcome == "UNKNOWN"
 
 
+def test_malformed_injected_transport_results_fail_closed() -> None:
+    bad_results = (
+        object(),
+        _HttpResult(True, b"{}", None, "application/json"),
+        _HttpResult(99, b"{}", None, "application/json"),
+        _HttpResult(200, "{}", None, "application/json"),
+        _HttpResult(200, b"x" * (256 * 1024 + 1), None, "application/json"),
+        _HttpResult(200, b"{}", "x" * 257, "application/json"),
+        _HttpResult(200, b"{}", None, "application/json\nInjected: yes"),
+    )
+
+    for bad_result in bad_results:
+        submit = submit_paper_order(
+            credentials=_creds(),
+            order=_order(),
+            request_fn=lambda request, timeout, bad_result=bad_result: bad_result,
+        )
+        assert submit.outcome == "UNKNOWN"
+
+        reconcile = reconcile_paper_order(
+            credentials=_creds(),
+            client_order_id="workflow-os:test:001",
+            request_fn=lambda request, timeout, bad_result=bad_result: bad_result,
+        )
+        assert reconcile.outcome == "STILL_UNKNOWN"
+
+
 def test_reconcile_finds_applied_order_by_exact_client_order_id() -> None:
     captured = {}
 

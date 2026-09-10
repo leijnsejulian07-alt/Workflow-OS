@@ -114,6 +114,32 @@ class WebsiteStaticBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "mailto"):
             build_static_site(self.snapshot, self.gate, replace(self.content, contact_href="javascript:alert(1)"))
 
+    def test_contact_targets_fail_closed(self):
+        valid = (
+            "mailto:info@example.com",
+            "mailto:sales.team+web@example.co.uk",
+            "tel:+31 6 12345678",
+        )
+        for href in valid:
+            with self.subTest(href=href):
+                build_static_site(self.snapshot, self.gate, replace(self.content, contact_href=href))
+
+        hostile = (
+            "mailto:info@example.com?subject=hello",
+            "mailto:info@example.com#x",
+            "mailto:info@example.com%0Aevil",
+            "mailto:info@example.com%0D%0ABcc:evil@example.com",
+            "mailto:info@bad_domain.example",
+            "mailto:info@example..com",
+            "mailto:info@example.com:443",
+            "tel:+31-6-12345678?x=1",
+            "tel:+31%0A612345678",
+            "tel:abc",
+        )
+        for href in hostile:
+            with self.subTest(href=href), self.assertRaises(ValueError):
+                build_static_site(self.snapshot, self.gate, replace(self.content, contact_href=href))
+
     def test_qa_detects_content_tampering(self):
         artifact = build_static_site(self.snapshot, self.gate, self.content)
         first = artifact.files[0]

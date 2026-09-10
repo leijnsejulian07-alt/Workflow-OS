@@ -85,11 +85,39 @@ def _slug(value: Any) -> str:
 
 def _contact_href(value: Any) -> str:
     href = _text(value, "contact_href", max_length=512)
+    if any(ord(char) < 32 or ord(char) == 127 for char in href):
+        raise ValueError("contact href contains control characters")
+    if "%" in href:
+        raise ValueError("contact href must not use percent-encoding")
     parsed = urlparse(href)
     if parsed.scheme not in {"mailto", "tel"}:
         raise ValueError("contact href must use mailto: or tel:")
     if parsed.netloc:
         raise ValueError("contact href must not contain a network location")
+    if parsed.params or parsed.query or parsed.fragment:
+        raise ValueError("contact href must not contain parameters, query, or fragment")
+    if parsed.scheme == "mailto":
+        target = parsed.path
+        if target.count("@") != 1 or any(char.isspace() for char in target):
+            raise ValueError("mailto target is malformed")
+        local, domain = target.rsplit("@", 1)
+        if not local or "." not in domain or domain.startswith(".") or domain.endswith("."):
+            raise ValueError("mailto target is malformed")
+        labels = domain.split(".")
+        if any(
+            not label
+            or len(label) > 63
+            or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
+            for label in labels
+        ):
+            raise ValueError("mailto target is malformed")
+    else:
+        target = parsed.path
+        if not target or not any(char.isdigit() for char in target):
+            raise ValueError("tel target is malformed")
+        if any(char not in "+0123456789(). -"
+               for char in target):
+            raise ValueError("tel target is malformed")
     return href
 
 

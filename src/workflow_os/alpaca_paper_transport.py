@@ -18,6 +18,7 @@ _MAX_RESPONSE_BYTES = 256 * 1024
 _MAX_CREDENTIAL_CHARS = 512
 _MAX_QTY_CHARS = 64
 _MAX_EXTERNAL_REFERENCE_CHARS = 256
+_MAX_RESPONSE_METADATA_CHARS = 256
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -124,6 +125,28 @@ def _default_request(request: Request, timeout_seconds: float) -> _HttpResult:
         )
 
 
+def _bounded_response_metadata(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > _MAX_RESPONSE_METADATA_CHARS:
+        raise ValueError("Alpaca response metadata is invalid")
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        raise ValueError("Alpaca response metadata is invalid")
+    return value
+
+
+def _validate_http_result(result: Any) -> _HttpResult:
+    if not isinstance(result, _HttpResult):
+        raise ValueError("Alpaca transport returned an invalid result")
+    if isinstance(result.status, bool) or not isinstance(result.status, int) or not 100 <= result.status <= 599:
+        raise ValueError("Alpaca response status is invalid")
+    if not isinstance(result.body, bytes) or len(result.body) > _MAX_RESPONSE_BYTES:
+        raise ValueError("Alpaca response body is invalid or exceeded size limit")
+    _bounded_response_metadata(result.request_id)
+    _bounded_response_metadata(result.content_type)
+    return result
+
+
 def _is_json_content_type(content_type: str | None) -> bool:
     if not isinstance(content_type, str):
         return False
@@ -196,7 +219,7 @@ def submit_paper_order(
         method="POST",
     )
     try:
-        result = request_fn(request, timeout_seconds)
+        result = _validate_http_result(request_fn(request, timeout_seconds))
     except (TimeoutError, socket.timeout, URLError, OSError, ValueError):
         return TradingOrderAttemptResult("UNKNOWN")
 
@@ -240,7 +263,7 @@ def reconcile_paper_order(
         method="GET",
     )
     try:
-        result = request_fn(request, timeout_seconds)
+        result = _validate_http_result(request_fn(request, timeout_seconds))
     except (TimeoutError, socket.timeout, URLError, OSError, ValueError):
         return TradingOrderReconciliationResult("STILL_UNKNOWN")
 

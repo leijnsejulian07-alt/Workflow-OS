@@ -17,6 +17,7 @@ ALPACA_PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 _MAX_RESPONSE_BYTES = 256 * 1024
 _MAX_CREDENTIAL_CHARS = 512
 _MAX_QTY_CHARS = 64
+_MAX_EXTERNAL_REFERENCE_CHARS = 256
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -132,6 +133,17 @@ def _json_object(body: bytes) -> dict[str, Any]:
     return parsed
 
 
+def _bounded_external_reference(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized or len(normalized) > _MAX_EXTERNAL_REFERENCE_CHARS:
+        return None
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in normalized):
+        return None
+    return normalized
+
+
 def _headers(credentials: AlpacaPaperCredentials) -> dict[str, str]:
     return {
         "APCA-API-KEY-ID": credentials.key_id.strip(),
@@ -186,14 +198,10 @@ def submit_paper_order(
             parsed = _json_object(result.body)
         except ValueError:
             return TradingOrderAttemptResult("UNKNOWN")
-        external_id = parsed.get("id")
+        external_id = _bounded_external_reference(parsed.get("id"))
         returned_client_id = parsed.get("client_order_id")
-        if (
-            isinstance(external_id, str)
-            and external_id.strip()
-            and returned_client_id == order.client_order_id.strip()
-        ):
-            return TradingOrderAttemptResult("APPLIED", external_id.strip())
+        if external_id is not None and returned_client_id == order.client_order_id.strip():
+            return TradingOrderAttemptResult("APPLIED", external_id)
         return TradingOrderAttemptResult("UNKNOWN")
 
     if 400 <= result.status < 500 and result.status not in {408, 409, 429}:
@@ -233,14 +241,10 @@ def reconcile_paper_order(
             parsed = _json_object(result.body)
         except ValueError:
             return TradingOrderReconciliationResult("STILL_UNKNOWN")
-        external_id = parsed.get("id")
+        external_id = _bounded_external_reference(parsed.get("id"))
         returned_client_id = parsed.get("client_order_id")
-        if (
-            isinstance(external_id, str)
-            and external_id.strip()
-            and returned_client_id == key
-        ):
-            return TradingOrderReconciliationResult("FOUND_APPLIED", external_id.strip())
+        if external_id is not None and returned_client_id == key:
+            return TradingOrderReconciliationResult("FOUND_APPLIED", external_id)
         return TradingOrderReconciliationResult("STILL_UNKNOWN")
 
     # A lookup miss is not strong enough evidence that a prior POST was never accepted;

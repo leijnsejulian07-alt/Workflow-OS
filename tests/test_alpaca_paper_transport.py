@@ -220,6 +220,44 @@ def test_reconcile_lookup_miss_remains_unknown_fail_closed() -> None:
     assert result.outcome == "STILL_UNKNOWN"
 
 
+@pytest.mark.parametrize("timeout_seconds", [0, -1, 31, float("nan"), float("inf"), True, "10"])
+def test_submit_rejects_invalid_timeout_before_transport(timeout_seconds) -> None:
+    called = False
+
+    def request_fn(request, timeout):
+        nonlocal called
+        called = True
+        return _json_result(200, b"{}")
+
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        submit_paper_order(
+            credentials=_creds(),
+            order=_order(),
+            timeout_seconds=timeout_seconds,
+            request_fn=request_fn,
+        )
+    assert called is False
+
+
+@pytest.mark.parametrize("timeout_seconds", [0, -1, 31, float("nan"), float("inf"), True, "10"])
+def test_reconcile_rejects_invalid_timeout_before_transport(timeout_seconds) -> None:
+    called = False
+
+    def request_fn(request, timeout):
+        nonlocal called
+        called = True
+        return _json_result(200, b"{}")
+
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        reconcile_paper_order(
+            credentials=_creds(),
+            client_order_id="workflow-os:test:001",
+            timeout_seconds=timeout_seconds,
+            request_fn=request_fn,
+        )
+    assert called is False
+
+
 def test_order_contract_rejects_unbounded_or_non_v1_order_shapes() -> None:
     with pytest.raises(ValueError):
         AlpacaPaperOrder("x", "AAPL", "0", "buy")

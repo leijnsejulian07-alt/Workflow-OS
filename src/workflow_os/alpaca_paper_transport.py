@@ -90,6 +90,24 @@ class _HttpResult:
     content_type: str | None = None
 
 
+def _validate_credentials(value: Any) -> AlpacaPaperCredentials:
+    if not isinstance(value, AlpacaPaperCredentials):
+        raise ValueError("credentials must be validated AlpacaPaperCredentials")
+    return value
+
+
+def _validate_order(value: Any) -> AlpacaPaperOrder:
+    if not isinstance(value, AlpacaPaperOrder):
+        raise ValueError("order must be a validated AlpacaPaperOrder")
+    return value
+
+
+def _validate_request_fn(value: Any) -> Callable[[Request, float], _HttpResult]:
+    if not callable(value):
+        raise ValueError("request_fn must be callable")
+    return value
+
+
 def _validate_base_url(base_url: str) -> str:
     if base_url != ALPACA_PAPER_BASE_URL:
         raise ValueError("only the exact Alpaca paper API base URL is allowed")
@@ -209,6 +227,9 @@ def submit_paper_order(
     mismatches are UNKNOWN so callers must reconcile instead of blindly retrying.
     """
 
+    credentials = _validate_credentials(credentials)
+    order = _validate_order(order)
+    request_fn = _validate_request_fn(request_fn)
     root = _validate_base_url(base_url)
     timeout_seconds = _validate_timeout_seconds(timeout_seconds)
     client_order_id = _validated_client_order_id(order.client_order_id)
@@ -259,6 +280,8 @@ def reconcile_paper_order(
 ) -> TradingOrderReconciliationResult:
     """Reconcile by Alpaca client_order_id without dispatching another order."""
 
+    credentials = _validate_credentials(credentials)
+    request_fn = _validate_request_fn(request_fn)
     root = _validate_base_url(base_url)
     timeout_seconds = _validate_timeout_seconds(timeout_seconds)
     key = _validated_client_order_id(client_order_id)

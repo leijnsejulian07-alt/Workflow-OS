@@ -38,6 +38,16 @@ def test_live_endpoint_is_impossible_to_select() -> None:
         )
 
 
+def test_credentials_are_not_exposed_by_repr_and_reject_header_injection() -> None:
+    credentials = _creds()
+    assert "paper-key" not in repr(credentials)
+    assert "paper-secret" not in repr(credentials)
+    with pytest.raises(ValueError):
+        AlpacaPaperCredentials("paper-key\r\nInjected: yes", "secret")
+    with pytest.raises(ValueError):
+        AlpacaPaperCredentials("paper-key", "secret\nInjected: yes")
+
+
 def test_submit_uses_official_paper_endpoint_and_client_order_id() -> None:
     captured = {}
 
@@ -147,6 +157,8 @@ def test_reconcile_lookup_miss_remains_unknown_fail_closed() -> None:
 def test_order_contract_rejects_unbounded_or_non_v1_order_shapes() -> None:
     with pytest.raises(ValueError):
         AlpacaPaperOrder("x", "AAPL", "0", "buy")
+    with pytest.raises(ValueError):
+        AlpacaPaperOrder("x", "AAPL", "1" * 65, "buy")
     with pytest.raises(ValueError):
         AlpacaPaperOrder("x", "AAPL", "1", "buy", order_type="limit")
     with pytest.raises(ValueError):

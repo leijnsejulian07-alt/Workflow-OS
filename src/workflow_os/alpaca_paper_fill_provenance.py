@@ -11,7 +11,7 @@ from .alpaca_paper_evidence import _policy_fingerprint
 from .alpaca_paper_runtime import AlpacaPaperStrategyPolicy
 from .audit import AuditRevenueLedger
 
-ALPACA_PAPER_FILL_PROVENANCE_POLICY_VERSION = "alpaca-paper-fill-provenance/1"
+ALPACA_PAPER_FILL_PROVENANCE_POLICY_VERSION = "alpaca-paper-fill-provenance/2"
 _OUTCOME_EVENT_TYPE = "trading.alpaca_paper_order_outcome"
 _POSITION_EVENT_TYPE = "trading.alpaca_paper_closed_position"
 
@@ -23,6 +23,8 @@ class AlpacaPaperClosedPositionFillProvenance:
     closing_client_order_id: str
     opening_filled_at: str
     closing_filled_at: str
+    paper_realized_pnl_usd: Decimal
+    modeled_total_execution_cost_usd: Decimal
     policy_version: str = ALPACA_PAPER_FILL_PROVENANCE_POLICY_VERSION
 
 
@@ -38,13 +40,17 @@ def _utc(value: object, *, field: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _positive_decimal(value: object, *, field: str) -> Decimal:
+def _decimal(value: object, *, field: str, positive: bool = False, nonnegative: bool = False) -> Decimal:
     try:
         number = Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:
-        raise ValueError(f"{field} must be a positive decimal") from exc
-    if not number.is_finite() or number <= 0:
-        raise ValueError(f"{field} must be a positive finite decimal")
+        raise ValueError(f"{field} must be a finite decimal") from exc
+    if not number.is_finite():
+        raise ValueError(f"{field} must be a finite decimal")
+    if positive and number <= 0:
+        raise ValueError(f"{field} must be positive")
+    if nonnegative and number < 0:
+        raise ValueError(f"{field} must be nonnegative")
     return number
 
 
@@ -73,12 +79,12 @@ def verify_alpaca_paper_curve_fill_provenance(
     strategy_policy: AlpacaPaperStrategyPolicy,
     curve: AlpacaPaperEquityCurve,
 ) -> tuple[AlpacaPaperClosedPositionFillProvenance, ...]:
-    """Bind closed-position equity points to immutable Alpaca fill timestamps.
+    """Bind equity points to immutable fills and closed-position accounting.
 
     Evidence observation timestamps are intentionally ignored for trade chronology.
-    Each equity point must bind to one immutable closed-position record and exact
-    opening/closing order-outcome fills matching symbol, side, quantity and price.
-    Missing or conflicting fill provenance fails closed.
+    Every equity point must bind exactly once to immutable closed-position evidence
+    and exact opening/closing fill outcomes. P&L and modeled execution costs must
+    also match the immutable closed-position accounting used to build the curve.
     """
     if not isinstance(audit_ledger, AuditRevenueLedger):
         raise TypeError("audit_ledger must be AuditRevenueLedger")
@@ -139,12 +145,16 @@ def verify_alpaca_paper_curve_fill_provenance(
         key = (opening_id, closing_id)
         canonical = {
             "symbol": position.get("symbol"),
-            "closed_qty": str(_positive_decimal(position.get("closed_qty"), field="closed_qty")),
-            "opening_fill_price": str(
-                _positive_decimal(position.get("opening_fill_price"), field="opening_fill_price")
-            ),
-            "closing_fill_price": str(
-                _positive_decimal(position.get("closing_fill_price"), field="closing_fill_price")
+            "closed_qty": str(_decimal(position.get("closed_qty"), field="closed_qty", positive=True)),
+            "opening_fill_price": str(_decimal(position.get("opening_fill_price"), field="opening_fill_price", positive=True)),
+            "closing_fill_price": str(_decimal(position.get("closing_fill_price"), field="closing_fill_price", positive=True)),
+            "paper_realized_pnl_usd": str(_decimal(position.get("paper_realized_pnl_usd"), field="paper_realized_pnl_usd")),
+            "modeled_total_execution_cost_usd": str(
+                _decimal(
+                    position.get("modeled_total_execution_cost_usd"),
+                    field="modeled_total_execution_cost_usd",
+                    nonnegative=True,
+                )
             ),
         }
         existing = positions.get(key)
@@ -153,16 +163,30 @@ def verify_alpaca_paper_curve_fill_provenance(
         positions[key] = canonical
 
     proven: list[AlpacaPaperClosedPositionFillProvenance] = []
+    matched_pairs: set[tuple[str, str]] = set()
+    modeled_cost_sum = Decimal("0")
     for point in curve.points:
         key = (point.opening_client_order_id, point.closing_client_order_id)
+        if key in matched_pairs:
+            raise ValueError("paper equity order pair is duplicated")
+        matched_pairs.add(key)
         position = positions.get(key)
         if position is None:
             raise ValueError("paper equity point lacks immutable closed-position evidence")
         if position.get("symbol") != point.symbol:
             raise ValueError("paper equity symbol does not match closed-position evidence")
-        expected_qty = _positive_decimal(position["closed_qty"], field="closed_qty")
-        expected_open_price = _positive_decimal(position["opening_fill_price"], field="opening_fill_price")
-        expected_close_price = _positive_decimal(position["closing_fill_price"], field="closing_fill_price")
+        expected_qty = _decimal(position["closed_qty"], field="closed_qty", positive=True)
+        expected_open_price = _decimal(position["opening_fill_price"], field="opening_fill_price", positive=True)
+        expected_close_price = _decimal(position["closing_fill_price"], field="closing_fill_price", positive=True)
+        expected_pnl = _decimal(position["paper_realized_pnl_usd"], field="paper_realized_pnl_usd")
+        expected_costs = _decimal(
+            position["modeled_total_execution_cost_usd"],
+            field="modeled_total_execution_cost_usd",
+            nonnegative=True,
+        )
+        if point.paper_realized_pnl_usd != expected_pnl:
+            raise ValueError("paper equity pnl does not match immutable closed-position evidence")
+        modeled_cost_sum += expected_costs
 
         def resolve(
             candidates: list[dict[str, object]],
@@ -177,9 +201,9 @@ def verify_alpaca_paper_curve_fill_provenance(
                 filled_at = order.get("filled_at")
                 if filled_at is None:
                     continue
-                qty = _positive_decimal(order.get("filled_qty"), field="filled_qty")
-                fill_price = _positive_decimal(order.get("filled_avg_price"), field="filled_avg_price")
-                filled_notional = _positive_decimal(order.get("filled_notional_usd"), field="filled_notional_usd")
+                qty = _decimal(order.get("filled_qty"), field="filled_qty", positive=True)
+                fill_price = _decimal(order.get("filled_avg_price"), field="filled_avg_price", positive=True)
+                filled_notional = _decimal(order.get("filled_notional_usd"), field="filled_notional_usd", positive=True)
                 if filled_notional != qty * fill_price:
                     raise ValueError("paper outcome filled notional is inconsistent")
                 if qty != expected_qty or fill_price != expected_price:
@@ -210,6 +234,13 @@ def verify_alpaca_paper_curve_fill_provenance(
                 closing_client_order_id=point.closing_client_order_id,
                 opening_filled_at=opening_filled_at.isoformat(),
                 closing_filled_at=closing_filled_at.isoformat(),
+                paper_realized_pnl_usd=expected_pnl,
+                modeled_total_execution_cost_usd=expected_costs,
             )
         )
+
+    if set(positions) != matched_pairs:
+        raise ValueError("immutable closed-position evidence has extra or missing order pairs")
+    if modeled_cost_sum != curve.modeled_execution_costs_usd:
+        raise ValueError("paper equity modeled costs do not match immutable closed-position evidence")
     return tuple(proven)

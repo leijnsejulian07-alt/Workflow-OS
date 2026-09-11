@@ -13,6 +13,7 @@ from .audit import AuditRevenueLedger
 
 ALPACA_PAPER_FILL_PROVENANCE_POLICY_VERSION = "alpaca-paper-fill-provenance/1"
 _OUTCOME_EVENT_TYPE = "trading.alpaca_paper_order_outcome"
+_POSITION_EVENT_TYPE = "trading.alpaca_paper_closed_position"
 
 
 @dataclass(frozen=True)
@@ -47,7 +48,7 @@ def _positive_decimal(value: object, *, field: str) -> Decimal:
     return number
 
 
-def _read_outcomes(audit_ledger: AuditRevenueLedger, *, strategy_id: str) -> list[sqlite3.Row]:
+def _read_events(audit_ledger: AuditRevenueLedger, *, strategy_id: str) -> list[sqlite3.Row]:
     if not audit_ledger.verify_audit_chain():
         raise ValueError("audit chain verification failed")
     db = sqlite3.connect(audit_ledger.path, timeout=5.0)
@@ -55,12 +56,12 @@ def _read_outcomes(audit_ledger: AuditRevenueLedger, *, strategy_id: str) -> lis
     try:
         return db.execute(
             """
-            SELECT occurred_at, event_json
+            SELECT event_type, occurred_at, event_json
             FROM audit_events
-            WHERE event_type=? AND subject_id=?
+            WHERE event_type IN (?, ?) AND subject_id=?
             ORDER BY occurred_at ASC, id ASC
             """,
-            (_OUTCOME_EVENT_TYPE, strategy_id),
+            (_OUTCOME_EVENT_TYPE, _POSITION_EVENT_TYPE, strategy_id),
         ).fetchall()
     finally:
         db.close()
@@ -74,9 +75,10 @@ def verify_alpaca_paper_curve_fill_provenance(
 ) -> tuple[AlpacaPaperClosedPositionFillProvenance, ...]:
     """Bind closed-position equity points to immutable Alpaca fill timestamps.
 
-    Observation timestamps are intentionally ignored. Each opening/closing order must
-    have exact paper outcome evidence matching strategy-policy fingerprint, symbol,
-    side, quantity and fill price. Conflicting matching fill timestamps fail closed.
+    Evidence observation timestamps are intentionally ignored for trade chronology.
+    Each equity point must bind to one immutable closed-position record and exact
+    opening/closing order-outcome fills matching symbol, side, quantity and price.
+    Missing or conflicting fill provenance fails closed.
     """
     if not isinstance(audit_ledger, AuditRevenueLedger):
         raise TypeError("audit_ledger must be AuditRevenueLedger")
@@ -91,46 +93,83 @@ def verify_alpaca_paper_curve_fill_provenance(
     if curve.strategy_policy_fingerprint != expected_fingerprint:
         raise ValueError("paper equity strategy-policy fingerprint mismatch")
 
-    rows = _read_outcomes(audit_ledger, strategy_id=strategy_policy.strategy_id)
     outcomes: dict[tuple[str, str], list[dict[str, object]]] = {}
-    for row in rows:
+    positions: dict[tuple[str, str], dict[str, object]] = {}
+    for row in _read_events(audit_ledger, strategy_id=strategy_policy.strategy_id):
         try:
             payload = json.loads(str(row["event_json"]))
         except (TypeError, json.JSONDecodeError) as exc:
-            raise ValueError("paper outcome evidence JSON is invalid") from exc
+            raise ValueError("Alpaca paper evidence JSON is invalid") from exc
         if not isinstance(payload, dict):
-            raise ValueError("paper outcome evidence payload is invalid")
+            raise ValueError("Alpaca paper evidence payload is invalid")
         if payload.get("provider") != "alpaca" or payload.get("mode") != "PAPER_ONLY":
-            raise ValueError("paper outcome evidence provider or mode mismatch")
+            raise ValueError("Alpaca paper evidence provider or mode mismatch")
         if payload.get("strategy_id") != strategy_policy.strategy_id:
-            raise ValueError("paper outcome evidence strategy mismatch")
+            raise ValueError("Alpaca paper evidence strategy mismatch")
         if payload.get("strategy_policy_fingerprint") != expected_fingerprint:
             continue
         if payload.get("proves_received_cash") is not False:
-            raise ValueError("paper outcome evidence may not prove received cash")
+            raise ValueError("Alpaca paper evidence may not prove received cash")
         if payload.get("may_enter_live_execution") is not False:
-            raise ValueError("paper outcome evidence may not grant live execution")
-        order = payload.get("order")
-        if not isinstance(order, dict):
-            raise ValueError("paper outcome evidence order is invalid")
-        client_order_id = order.get("client_order_id")
-        side = order.get("side")
-        if not isinstance(client_order_id, str) or not client_order_id.strip():
-            raise ValueError("paper outcome client order id is invalid")
-        if side not in {"buy", "sell"}:
-            raise ValueError("paper outcome side is invalid")
-        if order.get("has_fill") is not True:
+            raise ValueError("Alpaca paper evidence may not grant live execution")
+
+        if row["event_type"] == _OUTCOME_EVENT_TYPE:
+            order = payload.get("order")
+            if not isinstance(order, dict):
+                raise ValueError("paper outcome evidence order is invalid")
+            client_order_id = order.get("client_order_id")
+            side = order.get("side")
+            if not isinstance(client_order_id, str) or not client_order_id.strip():
+                raise ValueError("paper outcome client order id is invalid")
+            if side not in {"buy", "sell"}:
+                raise ValueError("paper outcome side is invalid")
+            if order.get("has_fill") is True:
+                outcomes.setdefault((client_order_id, side), []).append(order)
             continue
-        outcomes.setdefault((client_order_id, side), []).append(order)
+
+        position = payload.get("position")
+        if not isinstance(position, dict):
+            raise ValueError("closed-position evidence position is invalid")
+        opening_id = position.get("opening_client_order_id")
+        closing_id = position.get("closing_client_order_id")
+        if not isinstance(opening_id, str) or not opening_id.strip():
+            raise ValueError("closed-position opening order id is invalid")
+        if not isinstance(closing_id, str) or not closing_id.strip() or closing_id == opening_id:
+            raise ValueError("closed-position closing order id is invalid")
+        key = (opening_id, closing_id)
+        canonical = {
+            "symbol": position.get("symbol"),
+            "closed_qty": str(_positive_decimal(position.get("closed_qty"), field="closed_qty")),
+            "opening_fill_price": str(
+                _positive_decimal(position.get("opening_fill_price"), field="opening_fill_price")
+            ),
+            "closing_fill_price": str(
+                _positive_decimal(position.get("closing_fill_price"), field="closing_fill_price")
+            ),
+        }
+        existing = positions.get(key)
+        if existing is not None and existing != canonical:
+            raise ValueError("closed position has conflicting immutable execution provenance")
+        positions[key] = canonical
 
     proven: list[AlpacaPaperClosedPositionFillProvenance] = []
     for point in curve.points:
-        opening_candidates = outcomes.get((point.opening_client_order_id, "buy"), [])
-        closing_candidates = outcomes.get((point.closing_client_order_id, "sell"), [])
-        if not opening_candidates or not closing_candidates:
-            raise ValueError("closed paper position lacks immutable opening or closing fill evidence")
+        key = (point.opening_client_order_id, point.closing_client_order_id)
+        position = positions.get(key)
+        if position is None:
+            raise ValueError("paper equity point lacks immutable closed-position evidence")
+        if position.get("symbol") != point.symbol:
+            raise ValueError("paper equity symbol does not match closed-position evidence")
+        expected_qty = _positive_decimal(position["closed_qty"], field="closed_qty")
+        expected_open_price = _positive_decimal(position["opening_fill_price"], field="opening_fill_price")
+        expected_close_price = _positive_decimal(position["closing_fill_price"], field="closing_fill_price")
 
-        def resolve(candidates: list[dict[str, object]], *, side: str) -> datetime:
+        def resolve(
+            candidates: list[dict[str, object]],
+            *,
+            side: str,
+            expected_price: Decimal,
+        ) -> datetime:
             matching_times: set[datetime] = set()
             for order in candidates:
                 if order.get("symbol") != point.symbol:
@@ -143,6 +182,8 @@ def verify_alpaca_paper_curve_fill_provenance(
                 filled_notional = _positive_decimal(order.get("filled_notional_usd"), field="filled_notional_usd")
                 if filled_notional != qty * fill_price:
                     raise ValueError("paper outcome filled notional is inconsistent")
+                if qty != expected_qty or fill_price != expected_price:
+                    continue
                 matching_times.add(_utc(filled_at, field=f"{side}.filled_at"))
             if not matching_times:
                 raise ValueError(f"closed paper position lacks matching {side} fill provenance")
@@ -150,8 +191,16 @@ def verify_alpaca_paper_curve_fill_provenance(
                 raise ValueError(f"closed paper position has conflicting {side} fill timestamps")
             return next(iter(matching_times))
 
-        opening_filled_at = resolve(opening_candidates, side="opening")
-        closing_filled_at = resolve(closing_candidates, side="closing")
+        opening_filled_at = resolve(
+            outcomes.get((point.opening_client_order_id, "buy"), []),
+            side="opening",
+            expected_price=expected_open_price,
+        )
+        closing_filled_at = resolve(
+            outcomes.get((point.closing_client_order_id, "sell"), []),
+            side="closing",
+            expected_price=expected_close_price,
+        )
         if not opening_filled_at < closing_filled_at:
             raise ValueError("closed paper position fill chronology is invalid")
         proven.append(

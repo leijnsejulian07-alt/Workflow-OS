@@ -16,7 +16,7 @@ from .alpaca_paper_runtime import AlpacaPaperStrategyPolicy
 from .audit import AuditRevenueLedger
 from .trading_paper_learning import FundedReadinessDecision, PaperLearningPolicy
 
-ALPACA_PAPER_FUNDED_READINESS_POLICY_VERSION = "alpaca-paper-funded-readiness/2"
+ALPACA_PAPER_FUNDED_READINESS_POLICY_VERSION = "alpaca-paper-funded-readiness/3"
 
 
 def _utc(value: str, *, field: str) -> datetime:
@@ -33,6 +33,8 @@ def _utc(value: str, *, field: str) -> datetime:
 
 @dataclass(frozen=True, init=False)
 class AlpacaPaperValidationWindow:
+    audit_ledger: AuditRevenueLedger
+    strategy_policy: AlpacaPaperStrategyPolicy
     curve: AlpacaPaperEquityCurve
     context: AlpacaPaperLearningContext
     train_start: str
@@ -44,12 +46,18 @@ class AlpacaPaperValidationWindow:
     def _from_verified_provenance(
         cls,
         *,
+        audit_ledger: AuditRevenueLedger,
+        strategy_policy: AlpacaPaperStrategyPolicy,
         curve: AlpacaPaperEquityCurve,
         context: AlpacaPaperLearningContext,
         train_start: str,
         train_end: str,
         fill_provenance: tuple[AlpacaPaperClosedPositionFillProvenance, ...],
     ) -> AlpacaPaperValidationWindow:
+        if not isinstance(audit_ledger, AuditRevenueLedger):
+            raise TypeError("audit_ledger must be AuditRevenueLedger")
+        if not isinstance(strategy_policy, AlpacaPaperStrategyPolicy):
+            raise TypeError("strategy_policy must be AlpacaPaperStrategyPolicy")
         if not isinstance(curve, AlpacaPaperEquityCurve):
             raise TypeError("curve must be AlpacaPaperEquityCurve")
         if not isinstance(context, AlpacaPaperLearningContext):
@@ -84,6 +92,8 @@ class AlpacaPaperValidationWindow:
             raise ValueError("fill provenance order pairs do not match the paper equity curve")
 
         instance = object.__new__(cls)
+        object.__setattr__(instance, "audit_ledger", audit_ledger)
+        object.__setattr__(instance, "strategy_policy", strategy_policy)
         object.__setattr__(instance, "curve", curve)
         object.__setattr__(instance, "context", context)
         object.__setattr__(instance, "train_start", train_start)
@@ -121,12 +131,31 @@ def build_alpaca_paper_validation_window(
         curve=curve,
     )
     return AlpacaPaperValidationWindow._from_verified_provenance(
+        audit_ledger=audit_ledger,
+        strategy_policy=strategy_policy,
         curve=curve,
         context=context,
         train_start=train_start,
         train_end=train_end,
         fill_provenance=provenance,
     )
+
+
+def _reverify_window_provenance(window: AlpacaPaperValidationWindow) -> None:
+    """Re-bind a stored window to its immutable ledger before any readiness decision.
+
+    Python callers can technically reach underscore-prefixed helpers or manufacture
+    objects in-process. Readiness therefore never trusts the stored provenance tuple
+    as authority: it is recomputed from the attached immutable audit ledger and exact
+    strategy policy on every evaluation.
+    """
+    provenance = verify_alpaca_paper_curve_fill_provenance(
+        audit_ledger=window.audit_ledger,
+        strategy_policy=window.strategy_policy,
+        curve=window.curve,
+    )
+    if provenance != window.fill_provenance:
+        raise ValueError("validation window provenance does not match immutable ledger evidence")
 
 
 def evaluate_alpaca_funded_readiness(
@@ -136,8 +165,9 @@ def evaluate_alpaca_funded_readiness(
     """Evaluate sustained execution-derived Alpaca paper evidence only.
 
     This function never purchases a funded account, requests live credentials, or
-    grants live execution authority. Qualifying windows are admitted only after
-    immutable fill-time provenance proves both fills occurred inside each OOS period.
+    grants live execution authority. Every window is reverified against immutable
+    ledger evidence before evaluation, so caller-forged stored provenance cannot
+    qualify for PAPER_GREEN or FUNDED_READY.
     """
     if not isinstance(windows, tuple):
         raise TypeError("windows must be a tuple")
@@ -146,6 +176,9 @@ def evaluate_alpaca_funded_readiness(
         return FundedReadinessDecision("PAPER_RED", ("NO_PAPER_EVIDENCE",), ())
     if any(not isinstance(window, AlpacaPaperValidationWindow) for window in windows):
         raise TypeError("windows must contain AlpacaPaperValidationWindow values")
+
+    for window in windows:
+        _reverify_window_provenance(window)
 
     ordered = tuple(sorted(windows, key=lambda item: item.validation_start_utc))
     first_curve = ordered[0].curve

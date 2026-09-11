@@ -25,7 +25,7 @@ class AlpacaPaperFillProvenanceTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _outcome(self, *, client_order_id, side, price, filled_at):
+    def _make_outcome(self, *, client_order_id, side, price, filled_at):
         filled_at_dt = datetime.fromisoformat(filled_at.replace("Z", "+00:00")).astimezone(timezone.utc)
         return AlpacaPaperOrderOutcome(
             external_order_id=f"external-{client_order_id}",
@@ -69,13 +69,13 @@ class AlpacaPaperFillProvenanceTests(unittest.TestCase):
         )
 
     def test_uses_actual_fill_times_not_delayed_observation_time(self):
-        opening = self._outcome(
+        opening = self._make_outcome(
             client_order_id="trade-open",
             side="buy",
             price="100",
             filled_at="2026-09-11T10:00:01Z",
         )
-        closing = self._outcome(
+        closing = self._make_outcome(
             client_order_id="trade-close",
             side="sell",
             price="110",
@@ -101,19 +101,19 @@ class AlpacaPaperFillProvenanceTests(unittest.TestCase):
         self.assertNotEqual(curve.points[0].occurred_at, provenance[0].closing_filled_at)
 
     def test_missing_exact_fill_price_provenance_fails_closed(self):
-        opening = self._outcome(
+        opening = self._make_outcome(
             client_order_id="price-open",
             side="buy",
             price="100",
             filled_at="2026-09-11T10:00:01Z",
         )
-        closing_for_position = self._outcome(
+        closing_for_position = self._make_outcome(
             client_order_id="price-close",
             side="sell",
             price="110",
             filled_at="2026-09-11T10:30:01Z",
         )
-        closing_evidence = self._outcome(
+        closing_evidence = self._make_outcome(
             client_order_id="price-close",
             side="sell",
             price="109",
@@ -135,13 +135,13 @@ class AlpacaPaperFillProvenanceTests(unittest.TestCase):
             )
 
     def test_fill_chronology_must_be_open_then_close(self):
-        opening = self._outcome(
+        opening = self._make_outcome(
             client_order_id="time-open",
             side="buy",
             price="100",
             filled_at="2026-09-11T10:30:01Z",
         )
-        closing = self._outcome(
+        closing = self._make_outcome(
             client_order_id="time-close",
             side="sell",
             price="110",

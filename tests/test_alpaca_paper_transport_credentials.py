@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import pytest
+from tests import unittest_compat as pytest
 
 from workflow_os.alpaca_paper_transport import AlpacaPaperCredentials
 
@@ -12,3 +12,5 @@ def test_credentials_reject_all_ascii_control_characters(control: str) -> None:
 
     with pytest.raises(ValueError, match="paper secret_key is invalid"):
         AlpacaPaperCredentials("paper-key", f"paper{control}secret")
+
+load_tests = pytest.make_load_tests(globals())

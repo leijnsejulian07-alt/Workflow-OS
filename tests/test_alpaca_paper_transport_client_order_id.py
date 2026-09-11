@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import pytest
+from tests import unittest_compat as pytest
 
 from workflow_os.alpaca_paper_transport import (
     AlpacaPaperCredentials,
@@ -71,3 +71,5 @@ def test_reconcile_rejects_surrounding_whitespace_before_transport(client_order_
         )
 
     assert called is False
+
+load_tests = pytest.make_load_tests(globals())

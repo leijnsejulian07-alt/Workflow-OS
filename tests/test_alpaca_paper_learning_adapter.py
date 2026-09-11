@@ -12,27 +12,38 @@ from workflow_os.trading_paper_learning import PaperLearningPolicy
 
 class AlpacaPaperLearningAdapterTests(unittest.TestCase):
     def _curve(self, *, pnl="50", trade_count=60):
-        points = tuple(
-            AlpacaPaperEquityPoint(
-                occurred_at=f"2026-09-{1 + (index // 24):02d}T{index % 24:02d}:00:00+00:00",
-                symbol="AAPL",
-                opening_client_order_id=f"open-{index}",
-                closing_client_order_id=f"close-{index}",
-                paper_realized_pnl_usd=Decimal(pnl) / Decimal(trade_count),
-                cumulative_pnl_usd=Decimal(pnl) * Decimal(index + 1) / Decimal(trade_count),
-                equity_usd=Decimal("1000") + Decimal(pnl) * Decimal(index + 1) / Decimal(trade_count),
-                drawdown_pct=Decimal("0"),
+        total = Decimal(pnl)
+        cumulative = Decimal("0")
+        peak = Decimal("1000")
+        points_list = []
+        for index in range(trade_count):
+            trade_pnl = total if index == trade_count - 1 else Decimal("0")
+            cumulative += trade_pnl
+            equity = Decimal("1000") + cumulative
+            if equity > peak:
+                peak = equity
+            drawdown = Decimal("100") if equity <= 0 else (peak - equity) / peak * Decimal("100")
+            points_list.append(
+                AlpacaPaperEquityPoint(
+                    occurred_at=f"2026-09-{1 + (index // 24):02d}T{index % 24:02d}:00:00+00:00",
+                    symbol="AAPL",
+                    opening_client_order_id=f"open-{index}",
+                    closing_client_order_id=f"close-{index}",
+                    paper_realized_pnl_usd=trade_pnl,
+                    cumulative_pnl_usd=cumulative,
+                    equity_usd=equity,
+                    drawdown_pct=drawdown,
+                )
             )
-            for index in range(trade_count)
-        )
+        points = tuple(points_list)
         return AlpacaPaperEquityCurve(
             strategy_id="minute-body-v1",
             strategy_policy_fingerprint="a" * 64,
             starting_equity_usd=Decimal("1000"),
-            ending_equity_usd=Decimal("1000") + Decimal(pnl),
-            net_paper_pnl_usd=Decimal(pnl),
+            ending_equity_usd=Decimal("1000") + total,
+            net_paper_pnl_usd=total,
             modeled_execution_costs_usd=Decimal("5"),
-            max_drawdown_pct=Decimal("0"),
+            max_drawdown_pct=max((point.drawdown_pct for point in points), default=Decimal("0")),
             trade_count=trade_count,
             points=points,
         )
@@ -43,7 +54,12 @@ class AlpacaPaperLearningAdapterTests(unittest.TestCase):
         peak = Decimal("1000")
         max_drawdown = Decimal("0")
         for index in range(60):
-            pnl = Decimal("200") if index == 0 else -(Decimal("150") / Decimal("59"))
+            if index == 0:
+                pnl = Decimal("200")
+            elif index == 59:
+                pnl = Decimal("-150")
+            else:
+                pnl = Decimal("0")
             cumulative += pnl
             equity = Decimal("1000") + cumulative
             if equity > peak:

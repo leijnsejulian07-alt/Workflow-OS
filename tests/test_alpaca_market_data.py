@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from urllib.error import URLError
 
-import pytest
+from tests import unittest_compat as pytest
 
 from workflow_os.alpaca_market_data import (
     ALPACA_MARKET_DATA_BASE_URL,
@@ -182,3 +182,5 @@ def test_invalid_timeout_and_credentials_fail_before_transport() -> None:
             request_fn=request_fn,
         )
     assert called is False
+
+load_tests = pytest.make_load_tests(globals())

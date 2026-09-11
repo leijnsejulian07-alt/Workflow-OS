@@ -11,7 +11,7 @@ from workflow_os.alpaca_paper_order_outcome import AlpacaPaperOrderOutcome
 
 
 class AlpacaPaperExecutionCostsTests(unittest.TestCase):
-    def _outcome(
+    def _make_outcome(
         self,
         *,
         side="buy",
@@ -40,7 +40,7 @@ class AlpacaPaperExecutionCostsTests(unittest.TestCase):
 
     def test_adverse_buy_uses_observed_slippage_without_double_counting(self):
         economics = evaluate_paper_execution_economics(
-            outcome=self._outcome(),
+            outcome=self._make_outcome(),
             reference_price="100",
         )
         self.assertEqual(economics.reference_notional_usd, Decimal("200"))
@@ -55,7 +55,7 @@ class AlpacaPaperExecutionCostsTests(unittest.TestCase):
 
     def test_favorable_fill_still_charges_conservative_slippage_floor(self):
         economics = evaluate_paper_execution_economics(
-            outcome=self._outcome(filled_avg_price="99"),
+            outcome=self._make_outcome(filled_avg_price="99"),
             reference_price="100",
         )
         self.assertEqual(economics.observed_adverse_slippage_bps, Decimal("0"))
@@ -67,7 +67,7 @@ class AlpacaPaperExecutionCostsTests(unittest.TestCase):
 
     def test_adverse_sell_is_symmetric_and_costs_reduce_proceeds(self):
         economics = evaluate_paper_execution_economics(
-            outcome=self._outcome(side="sell", filled_avg_price="99"),
+            outcome=self._make_outcome(side="sell", filled_avg_price="99"),
             reference_price="100",
         )
         self.assertEqual(economics.observed_adverse_slippage_bps, Decimal("100"))
@@ -78,7 +78,7 @@ class AlpacaPaperExecutionCostsTests(unittest.TestCase):
 
     def test_partial_fill_costs_only_reconciled_quantity(self):
         economics = evaluate_paper_execution_economics(
-            outcome=self._outcome(
+            outcome=self._make_outcome(
                 status="canceled",
                 ordered_qty="2",
                 filled_qty="0.5",
@@ -94,7 +94,7 @@ class AlpacaPaperExecutionCostsTests(unittest.TestCase):
         self.assertEqual(economics.modeled_net_cash_flow_usd, Decimal("-50.075"))
 
     def test_no_fill_and_invalid_reference_fail_closed(self):
-        no_fill = self._outcome(
+        no_fill = self._make_outcome(
             status="canceled",
             filled_qty="0",
             filled_avg_price=None,
@@ -108,7 +108,7 @@ class AlpacaPaperExecutionCostsTests(unittest.TestCase):
             with self.subTest(reference_price=value):
                 with self.assertRaises(ValueError):
                     evaluate_paper_execution_economics(
-                        outcome=self._outcome(),
+                        outcome=self._make_outcome(),
                         reference_price=value,
                     )
 
@@ -134,7 +134,7 @@ class AlpacaPaperExecutionCostsTests(unittest.TestCase):
 
     def test_execution_economics_never_proves_cash_pnl_or_live_authority(self):
         economics = evaluate_paper_execution_economics(
-            outcome=self._outcome(),
+            outcome=self._make_outcome(),
             reference_price="100",
         )
         self.assertFalse(economics.proves_received_cash)

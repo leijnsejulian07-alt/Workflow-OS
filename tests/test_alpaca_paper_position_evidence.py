@@ -1,3 +1,4 @@
+from contextlib import closing
 import json
 import sqlite3
 import tempfile
@@ -77,7 +78,7 @@ class AlpacaPaperPositionEvidenceTests(unittest.TestCase):
         self.assertEqual(self.audit.gross_cash_eur(), 0.0)
         self.assertTrue(self.audit.verify_audit_chain())
 
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             rows = db.execute(
                 "SELECT event_json FROM audit_events "
                 "WHERE event_type='trading.alpaca_paper_closed_position'"
@@ -92,7 +93,7 @@ class AlpacaPaperPositionEvidenceTests(unittest.TestCase):
         self.assertEqual(payload["position"]["symbol"], "AAPL")
         self.assertEqual(payload["position"]["opening_client_order_id"], "open-1")
         self.assertEqual(payload["position"]["closing_client_order_id"], "close-1")
-        self.assertEqual(payload["position"]["paper_realized_pnl_usd"], "19.370")
+        self.assertEqual(Decimal(payload["position"]["paper_realized_pnl_usd"]), Decimal("19.370"))
         self.assertFalse(payload["proves_received_cash"])
         self.assertFalse(payload["proves_realized_cash_pnl"])
         self.assertFalse(payload["may_enter_live_execution"])

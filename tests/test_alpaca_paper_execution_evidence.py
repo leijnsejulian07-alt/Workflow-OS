@@ -1,3 +1,4 @@
+from contextlib import closing
 import json
 import sqlite3
 import tempfile
@@ -64,7 +65,7 @@ class AlpacaPaperExecutionEvidenceTests(unittest.TestCase):
         self.assertEqual(self.audit.gross_cash_eur(), 0.0)
         self.assertTrue(self.audit.verify_audit_chain())
 
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             rows = db.execute(
                 "SELECT event_json FROM audit_events "
                 "WHERE event_type='trading.alpaca_paper_execution_economics'"
@@ -76,7 +77,7 @@ class AlpacaPaperExecutionEvidenceTests(unittest.TestCase):
             _strategy_policy_fingerprint(self.strategy_policy),
         )
         self.assertEqual(payload["execution"]["symbol"], "AAPL")
-        self.assertEqual(payload["execution"]["observed_adverse_slippage_bps"], "100")
+        self.assertEqual(Decimal(payload["execution"]["observed_adverse_slippage_bps"]), Decimal("100"))
         self.assertEqual(payload["execution"]["modeled_total_execution_cost_usd"], "2.101")
         self.assertEqual(payload["execution"]["modeled_net_cash_flow_usd"], "-202.101")
         self.assertFalse(payload["proves_received_cash"])

@@ -1,3 +1,4 @@
+from contextlib import closing
 import json
 import sqlite3
 import tempfile
@@ -73,7 +74,7 @@ class AlpacaPaperEvidenceTests(unittest.TestCase):
         self.assertFalse(first.proves_received_cash)
         self.assertFalse(first.may_enter_live_execution)
         self.assertTrue(self.audit.verify_audit_chain())
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             row = db.execute(
                 "SELECT event_json FROM audit_events WHERE event_type='trading.alpaca_paper_runtime'"
             ).fetchone()

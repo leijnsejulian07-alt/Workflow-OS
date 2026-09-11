@@ -1,3 +1,4 @@
+from contextlib import closing
 import json
 import sqlite3
 import tempfile
@@ -22,7 +23,7 @@ class AlpacaPaperOutcomeEvidenceTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _outcome(
+    def _make_outcome(
         self,
         *,
         status="filled",
@@ -46,7 +47,7 @@ class AlpacaPaperOutcomeEvidenceTests(unittest.TestCase):
         )
 
     def test_fill_evidence_is_idempotent_and_never_cash_truth(self):
-        outcome = self._outcome()
+        outcome = self._make_outcome()
         kwargs = dict(
             audit_ledger=self.audit,
             account_id="paper-account",
@@ -63,7 +64,7 @@ class AlpacaPaperOutcomeEvidenceTests(unittest.TestCase):
         self.assertEqual(self.audit.gross_cash_eur(), 0.0)
         self.assertTrue(self.audit.verify_audit_chain())
 
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             rows = db.execute(
                 "SELECT event_json FROM audit_events "
                 "WHERE event_type='trading.alpaca_paper_order_outcome'"
@@ -79,13 +80,13 @@ class AlpacaPaperOutcomeEvidenceTests(unittest.TestCase):
         self.assertFalse(payload["may_enter_live_execution"])
 
     def test_state_transition_creates_distinct_immutable_events(self):
-        partial = self._outcome(
+        partial = self._make_outcome(
             status="partially_filled",
             filled_qty="0.005",
             filled_avg_price=Decimal("101.00"),
             terminal=False,
         )
-        canceled = self._outcome(
+        canceled = self._make_outcome(
             status="canceled",
             filled_qty="0.005",
             filled_avg_price=Decimal("101.00"),
@@ -114,7 +115,7 @@ class AlpacaPaperOutcomeEvidenceTests(unittest.TestCase):
         self.assertTrue(self.audit.verify_audit_chain())
 
     def test_same_snapshot_at_new_poll_time_is_separate_observation(self):
-        outcome = self._outcome(
+        outcome = self._make_outcome(
             status="new",
             filled_qty="0",
             filled_avg_price=None,

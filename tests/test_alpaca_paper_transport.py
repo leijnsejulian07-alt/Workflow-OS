@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from urllib.error import URLError
 
-import pytest
+from tests import unittest_compat as pytest
 
 from workflow_os.alpaca_paper_transport import (
     ALPACA_PAPER_BASE_URL,
@@ -294,3 +294,5 @@ def test_order_contract_rejects_unbounded_or_non_v1_order_shapes() -> None:
         AlpacaPaperOrder("x", "AAPL", "1", "buy", order_type="limit")
     with pytest.raises(ValueError):
         AlpacaPaperOrder("x", "AAPL", "1", "buy", time_in_force="gtc")
+
+load_tests = pytest.make_load_tests(globals())

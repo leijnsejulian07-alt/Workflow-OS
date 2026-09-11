@@ -1,3 +1,4 @@
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -161,11 +162,12 @@ class AlpacaPaperEquityTests(unittest.TestCase):
     def test_broken_audit_hash_chain_fails_closed(self):
         position = self._position(prefix="tamper", opening_reference="100", closing_reference="110")
         self._record(position, "2026-09-11T10:05:00Z")
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             db.execute(
                 "UPDATE audit_events SET event_json=? WHERE event_type=?",
                 ('{"tampered":true}', "trading.alpaca_paper_closed_position"),
             )
+            db.commit()
 
         with self.assertRaisesRegex(ValueError, "audit chain verification failed"):
             build_alpaca_paper_equity_curve(

@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-import pytest
+from tests import unittest_compat as pytest
 
 from workflow_os.alpaca_paper_equity import AlpacaPaperEquityCurve, AlpacaPaperEquityPoint
 from workflow_os.alpaca_paper_funded_readiness import (
@@ -222,3 +222,5 @@ def test_training_and_validation_windows_may_not_overlap() -> None:
             end="2026-08-11T00:00:00Z",
             occurred_at="2026-08-10T13:00:00Z",
         )
+
+load_tests = pytest.make_load_tests(globals())

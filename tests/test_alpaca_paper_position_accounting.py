@@ -12,7 +12,7 @@ from workflow_os.alpaca_paper_position_accounting import (
 
 
 class AlpacaPaperPositionAccountingTests(unittest.TestCase):
-    def _outcome(self, *, client_order_id, side, price, qty="2", symbol="AAPL"):
+    def _make_outcome(self, *, client_order_id, side, price, qty="2", symbol="AAPL"):
         return AlpacaPaperOrderOutcome(
             external_order_id=f"external-{client_order_id}",
             client_order_id=client_order_id,
@@ -38,7 +38,7 @@ class AlpacaPaperPositionAccountingTests(unittest.TestCase):
         symbol="AAPL",
     ):
         return evaluate_paper_execution_economics(
-            outcome=self._outcome(
+            outcome=self._make_outcome(
                 client_order_id=client_order_id,
                 side=side,
                 price=fill if fill is not None else reference,

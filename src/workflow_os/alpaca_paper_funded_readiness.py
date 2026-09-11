@@ -31,7 +31,7 @@ def _utc(value: str, *, field: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class AlpacaPaperValidationWindow:
     curve: AlpacaPaperEquityCurve
     context: AlpacaPaperLearningContext
@@ -40,30 +40,37 @@ class AlpacaPaperValidationWindow:
     fill_provenance: tuple[AlpacaPaperClosedPositionFillProvenance, ...]
     policy_version: str = ALPACA_PAPER_FUNDED_READINESS_POLICY_VERSION
 
-    def __post_init__(self) -> None:
-        if self.policy_version != ALPACA_PAPER_FUNDED_READINESS_POLICY_VERSION:
-            raise ValueError("alpaca paper funded readiness policy version mismatch")
-        if not isinstance(self.curve, AlpacaPaperEquityCurve):
+    @classmethod
+    def _from_verified_provenance(
+        cls,
+        *,
+        curve: AlpacaPaperEquityCurve,
+        context: AlpacaPaperLearningContext,
+        train_start: str,
+        train_end: str,
+        fill_provenance: tuple[AlpacaPaperClosedPositionFillProvenance, ...],
+    ) -> AlpacaPaperValidationWindow:
+        if not isinstance(curve, AlpacaPaperEquityCurve):
             raise TypeError("curve must be AlpacaPaperEquityCurve")
-        if not isinstance(self.context, AlpacaPaperLearningContext):
+        if not isinstance(context, AlpacaPaperLearningContext):
             raise TypeError("context must be AlpacaPaperLearningContext")
-        if not isinstance(self.fill_provenance, tuple):
+        if not isinstance(fill_provenance, tuple):
             raise TypeError("fill_provenance must be a tuple")
-        train_start = _utc(self.train_start, field="train_start")
-        train_end = _utc(self.train_end, field="train_end")
-        validation_start = _utc(self.context.validation_start, field="validation_start")
-        validation_end = _utc(self.context.validation_end, field="validation_end")
-        if not train_start < train_end <= validation_start < validation_end:
+        train_start_utc = _utc(train_start, field="train_start")
+        train_end_utc = _utc(train_end, field="train_end")
+        validation_start = _utc(context.validation_start, field="validation_start")
+        validation_end = _utc(context.validation_end, field="validation_end")
+        if not train_start_utc < train_end_utc <= validation_start < validation_end:
             raise ValueError("train and validation windows must be chronological and non-overlapping")
-        if len(self.fill_provenance) != len(self.curve.points):
+        if len(fill_provenance) != len(curve.points):
             raise ValueError("fill provenance must map exactly once to every equity point")
 
         expected_pairs = tuple(
             (point.opening_client_order_id, point.closing_client_order_id)
-            for point in self.curve.points
+            for point in curve.points
         )
         actual_pairs: list[tuple[str, str]] = []
-        for provenance in self.fill_provenance:
+        for provenance in fill_provenance:
             if not isinstance(provenance, AlpacaPaperClosedPositionFillProvenance):
                 raise TypeError("fill_provenance contains an invalid value")
             actual_pairs.append(
@@ -75,6 +82,15 @@ class AlpacaPaperValidationWindow:
                 raise ValueError("paper position fills fall outside its validation window")
         if tuple(actual_pairs) != expected_pairs:
             raise ValueError("fill provenance order pairs do not match the paper equity curve")
+
+        instance = object.__new__(cls)
+        object.__setattr__(instance, "curve", curve)
+        object.__setattr__(instance, "context", context)
+        object.__setattr__(instance, "train_start", train_start)
+        object.__setattr__(instance, "train_end", train_end)
+        object.__setattr__(instance, "fill_provenance", fill_provenance)
+        object.__setattr__(instance, "policy_version", ALPACA_PAPER_FUNDED_READINESS_POLICY_VERSION)
+        return instance
 
     @property
     def validation_start_utc(self) -> datetime:
@@ -104,7 +120,7 @@ def build_alpaca_paper_validation_window(
         strategy_policy=strategy_policy,
         curve=curve,
     )
-    return AlpacaPaperValidationWindow(
+    return AlpacaPaperValidationWindow._from_verified_provenance(
         curve=curve,
         context=context,
         train_start=train_start,

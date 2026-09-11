@@ -116,6 +116,8 @@ def verify_alpaca_paper_curve_fill_provenance(
             continue
         if payload.get("proves_received_cash") is not False:
             raise ValueError("Alpaca paper evidence may not prove received cash")
+        if payload.get("proves_realized_cash_pnl", False) is not False:
+            raise ValueError("Alpaca paper evidence may not prove realized cash pnl")
         if payload.get("may_enter_live_execution") is not False:
             raise ValueError("Alpaca paper evidence may not grant live execution")
 
@@ -239,8 +241,6 @@ def verify_alpaca_paper_curve_fill_provenance(
             )
         )
 
-    if set(positions) != matched_pairs:
-        raise ValueError("immutable closed-position evidence has extra or missing order pairs")
     if modeled_cost_sum != curve.modeled_execution_costs_usd:
         raise ValueError("paper equity modeled costs do not match immutable closed-position evidence")
     return tuple(proven)

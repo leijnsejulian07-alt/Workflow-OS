@@ -34,6 +34,24 @@ def market_ok(request, timeout):
     return _HttpResult(200, json.dumps(body).encode(), "market-rid", "application/json")
 
 
+def clock_ok(request, timeout):
+    body = {"timestamp": "2026-09-11T00:01:00Z", "is_open": True}
+    return _HttpResult(200, json.dumps(body).encode(), "clock-rid", "application/json")
+
+
+def account_ok(request, timeout):
+    body = {
+        "id": "paper-account",
+        "status": "ACTIVE",
+        "currency": "USD",
+        "buying_power": "1000.00",
+        "trading_blocked": False,
+        "account_blocked": False,
+        "trade_suspended_by_user": False,
+    }
+    return _HttpResult(200, json.dumps(body).encode(), "account-rid", "application/json")
+
+
 class AlpacaPaperRuntimeProvenanceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -66,6 +84,8 @@ class AlpacaPaperRuntimeProvenanceTests(unittest.TestCase):
             ledger=self.ledger,
             policy=AlpacaPaperStrategyPolicy(strategy_id="minute-body-v1", quantity_shares=0.01),
             market_request_fn=market_ok,
+            clock_request_fn=clock_ok,
+            account_request_fn=account_ok,
             order_request_fn=order_ok,
             now_utc=NOW,
         )
@@ -76,6 +96,8 @@ class AlpacaPaperRuntimeProvenanceTests(unittest.TestCase):
             ledger=self.ledger,
             policy=AlpacaPaperStrategyPolicy(strategy_id="minute-body-v1", quantity_shares=0.02),
             market_request_fn=market_ok,
+            clock_request_fn=clock_ok,
+            account_request_fn=account_ok,
             order_request_fn=order_ok,
             now_utc=NOW,
         )
@@ -114,7 +136,7 @@ class AlpacaPaperRuntimeProvenanceTests(unittest.TestCase):
         self.ledger.begin_attempt(decision.client_order_id)
         self.ledger.mark_succeeded(decision.client_order_id, external_reference="wrong-order")
 
-        def forbidden_order(request, timeout):
+        def forbidden(request, timeout):
             raise AssertionError("wrongly-bound succeeded side effect must never reach transport")
 
         with self.assertRaisesRegex(ValueError, "different side effect"):
@@ -125,7 +147,9 @@ class AlpacaPaperRuntimeProvenanceTests(unittest.TestCase):
                 ledger=self.ledger,
                 policy=policy,
                 market_request_fn=market_ok,
-                order_request_fn=forbidden_order,
+                clock_request_fn=forbidden,
+                account_request_fn=forbidden,
+                order_request_fn=forbidden,
                 now_utc=NOW,
             )
 

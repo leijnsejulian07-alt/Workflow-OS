@@ -25,6 +25,11 @@ def market_ok(request, timeout):
     return _HttpResult(200, json.dumps(body).encode(), "market-rid", "application/json")
 
 
+def clock_ok(request, timeout):
+    body = {"timestamp": "2026-09-11T00:01:00Z", "is_open": True}
+    return _HttpResult(200, json.dumps(body).encode(), "clock-rid", "application/json")
+
+
 def account_ok(request, timeout):
     body = {
         "id": "paper-account",
@@ -69,6 +74,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=self.policy,
             market_request_fn=market_ok,
+            clock_request_fn=clock_ok,
             account_request_fn=account_ok,
             order_request_fn=order_ok,
             now_utc=self.now_utc,
@@ -77,6 +83,9 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
         self.assertEqual(first.side_effect.state, "SUCCEEDED")
         self.assertEqual(calls, ["POST"])
 
+        def forbidden_gate(request, timeout):
+            raise AssertionError("already-succeeded replay must not re-run new-order gates")
+
         second = run_alpaca_paper_once(
             credentials=self.credentials,
             account_id="paper-account",
@@ -84,7 +93,8 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=self.policy,
             market_request_fn=market_ok,
-            account_request_fn=account_ok,
+            clock_request_fn=forbidden_gate,
+            account_request_fn=forbidden_gate,
             order_request_fn=order_ok,
             now_utc=self.now_utc,
         )
@@ -113,6 +123,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=self.policy,
             market_request_fn=market_ok,
+            clock_request_fn=clock_ok,
             account_request_fn=account_ok,
             order_request_fn=order_ambiguous_then_found,
             now_utc=self.now_utc,
@@ -120,8 +131,8 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
         self.assertEqual(first.status, "EXECUTED")
         self.assertEqual(first.side_effect.state, "UNKNOWN")
 
-        def forbidden_account(request, timeout):
-            raise AssertionError("UNKNOWN reconciliation must remain read-only and bypass new-order account gating")
+        def forbidden_gate(request, timeout):
+            raise AssertionError("UNKNOWN reconciliation must remain read-only and bypass new-order gates")
 
         second = run_alpaca_paper_once(
             credentials=self.credentials,
@@ -130,7 +141,8 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=self.policy,
             market_request_fn=market_ok,
-            account_request_fn=forbidden_account,
+            clock_request_fn=forbidden_gate,
+            account_request_fn=forbidden_gate,
             order_request_fn=order_ambiguous_then_found,
             now_utc=self.now_utc,
         )
@@ -144,7 +156,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             return _HttpResult(200, json.dumps(body).encode(), "market-rid", "application/json")
 
         def forbidden(request, timeout):
-            raise AssertionError("account/order transport must not be called")
+            raise AssertionError("clock/account/order transport must not be called")
 
         result = run_alpaca_paper_once(
             credentials=self.credentials,
@@ -153,6 +165,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=self.policy,
             market_request_fn=market_bearish,
+            clock_request_fn=forbidden,
             account_request_fn=forbidden,
             order_request_fn=forbidden,
             now_utc=self.now_utc,
@@ -166,7 +179,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
         )
 
         def forbidden(request, timeout):
-            raise AssertionError("account/order transport must not be called")
+            raise AssertionError("clock/account/order transport must not be called")
 
         result = run_alpaca_paper_once(
             credentials=self.credentials,
@@ -175,6 +188,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=policy,
             market_request_fn=market_ok,
+            clock_request_fn=forbidden,
             account_request_fn=forbidden,
             order_request_fn=forbidden,
             now_utc=self.now_utc,
@@ -184,7 +198,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
 
     def test_stale_observation_holds_before_order_transport(self):
         def forbidden(request, timeout):
-            raise AssertionError("account/order transport must not be called for stale market data")
+            raise AssertionError("clock/account/order transport must not be called for stale market data")
 
         result = run_alpaca_paper_once(
             credentials=self.credentials,
@@ -193,6 +207,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=self.policy,
             market_request_fn=market_ok,
+            clock_request_fn=forbidden,
             account_request_fn=forbidden,
             order_request_fn=forbidden,
             now_utc=datetime(2026, 9, 11, 0, 3, 1, tzinfo=timezone.utc),
@@ -218,7 +233,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             return _HttpResult(200, json.dumps(body).encode(), "market-rid", "application/json")
 
         def forbidden(request, timeout):
-            raise AssertionError("account/order transport must not be called for future market data")
+            raise AssertionError("clock/account/order transport must not be called for future market data")
 
         result = run_alpaca_paper_once(
             credentials=self.credentials,
@@ -227,6 +242,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=self.policy,
             market_request_fn=market_future,
+            clock_request_fn=forbidden,
             account_request_fn=forbidden,
             order_request_fn=forbidden,
             now_utc=self.now_utc,

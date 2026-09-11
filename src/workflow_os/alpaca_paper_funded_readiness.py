@@ -4,13 +4,19 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from .alpaca_paper_equity import AlpacaPaperEquityCurve
+from .alpaca_paper_fill_provenance import (
+    AlpacaPaperClosedPositionFillProvenance,
+    verify_alpaca_paper_curve_fill_provenance,
+)
 from .alpaca_paper_learning_adapter import (
     AlpacaPaperLearningContext,
     evaluate_alpaca_paper_equity_curve,
 )
+from .alpaca_paper_runtime import AlpacaPaperStrategyPolicy
+from .audit import AuditRevenueLedger
 from .trading_paper_learning import FundedReadinessDecision, PaperLearningPolicy
 
-ALPACA_PAPER_FUNDED_READINESS_POLICY_VERSION = "alpaca-paper-funded-readiness/1"
+ALPACA_PAPER_FUNDED_READINESS_POLICY_VERSION = "alpaca-paper-funded-readiness/2"
 
 
 def _utc(value: str, *, field: str) -> datetime:
@@ -31,6 +37,7 @@ class AlpacaPaperValidationWindow:
     context: AlpacaPaperLearningContext
     train_start: str
     train_end: str
+    fill_provenance: tuple[AlpacaPaperClosedPositionFillProvenance, ...]
     policy_version: str = ALPACA_PAPER_FUNDED_READINESS_POLICY_VERSION
 
     def __post_init__(self) -> None:
@@ -40,16 +47,34 @@ class AlpacaPaperValidationWindow:
             raise TypeError("curve must be AlpacaPaperEquityCurve")
         if not isinstance(self.context, AlpacaPaperLearningContext):
             raise TypeError("context must be AlpacaPaperLearningContext")
+        if not isinstance(self.fill_provenance, tuple):
+            raise TypeError("fill_provenance must be a tuple")
         train_start = _utc(self.train_start, field="train_start")
         train_end = _utc(self.train_end, field="train_end")
         validation_start = _utc(self.context.validation_start, field="validation_start")
         validation_end = _utc(self.context.validation_end, field="validation_end")
         if not train_start < train_end <= validation_start < validation_end:
             raise ValueError("train and validation windows must be chronological and non-overlapping")
-        for point in self.curve.points:
-            occurred = _utc(point.occurred_at, field="equity_point.occurred_at")
-            if occurred < validation_start or occurred >= validation_end:
-                raise ValueError("paper equity point falls outside its validation window")
+        if len(self.fill_provenance) != len(self.curve.points):
+            raise ValueError("fill provenance must map exactly once to every equity point")
+
+        expected_pairs = tuple(
+            (point.opening_client_order_id, point.closing_client_order_id)
+            for point in self.curve.points
+        )
+        actual_pairs: list[tuple[str, str]] = []
+        for provenance in self.fill_provenance:
+            if not isinstance(provenance, AlpacaPaperClosedPositionFillProvenance):
+                raise TypeError("fill_provenance contains an invalid value")
+            actual_pairs.append(
+                (provenance.opening_client_order_id, provenance.closing_client_order_id)
+            )
+            opening = _utc(provenance.opening_filled_at, field="opening_filled_at")
+            closing = _utc(provenance.closing_filled_at, field="closing_filled_at")
+            if not validation_start <= opening < closing < validation_end:
+                raise ValueError("paper position fills fall outside its validation window")
+        if tuple(actual_pairs) != expected_pairs:
+            raise ValueError("fill provenance order pairs do not match the paper equity curve")
 
     @property
     def validation_start_utc(self) -> datetime:
@@ -64,6 +89,30 @@ class AlpacaPaperValidationWindow:
         return max(0, (self.validation_end_utc - self.validation_start_utc).days)
 
 
+def build_alpaca_paper_validation_window(
+    *,
+    audit_ledger: AuditRevenueLedger,
+    strategy_policy: AlpacaPaperStrategyPolicy,
+    curve: AlpacaPaperEquityCurve,
+    context: AlpacaPaperLearningContext,
+    train_start: str,
+    train_end: str,
+) -> AlpacaPaperValidationWindow:
+    """Build an OOS window only from immutable paper execution provenance."""
+    provenance = verify_alpaca_paper_curve_fill_provenance(
+        audit_ledger=audit_ledger,
+        strategy_policy=strategy_policy,
+        curve=curve,
+    )
+    return AlpacaPaperValidationWindow(
+        curve=curve,
+        context=context,
+        train_start=train_start,
+        train_end=train_end,
+        fill_provenance=provenance,
+    )
+
+
 def evaluate_alpaca_funded_readiness(
     windows: tuple[AlpacaPaperValidationWindow, ...],
     policy: PaperLearningPolicy | None = None,
@@ -71,9 +120,8 @@ def evaluate_alpaca_funded_readiness(
     """Evaluate sustained execution-derived Alpaca paper evidence only.
 
     This function never purchases a funded account, requests live credentials, or
-    grants live execution authority. It only emits evidence-only readiness state.
-    All qualifying windows must use one exact strategy-policy fingerprint and must
-    be strictly chronological, non-overlapping out-of-sample validation windows.
+    grants live execution authority. Qualifying windows are admitted only after
+    immutable fill-time provenance proves both fills occurred inside each OOS period.
     """
     if not isinstance(windows, tuple):
         raise TypeError("windows must be a tuple")

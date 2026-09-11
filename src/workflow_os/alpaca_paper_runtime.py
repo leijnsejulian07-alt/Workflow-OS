@@ -8,6 +8,7 @@ from typing import Callable
 
 from .alpaca_market_data import AlpacaLatestBarObservation, fetch_latest_iex_bar
 from .alpaca_paper_account import fetch_paper_account_snapshot
+from .alpaca_paper_clock import fetch_paper_market_clock
 from .alpaca_paper_transport import (
     AlpacaPaperCredentials,
     AlpacaPaperOrder,
@@ -20,7 +21,7 @@ from .trading_order_execution import execute_reserved_trading_order, reconcile_u
 from .trading_order_reservation import TradingOrderReservationResult
 from .trading_order_risk_gate import TradingOrderRiskDecision
 
-ALPACA_PAPER_RUNTIME_POLICY_VERSION = "alpaca-paper-runtime/1"
+ALPACA_PAPER_RUNTIME_POLICY_VERSION = "alpaca-paper-runtime/2"
 ALPACA_PAPER_ACTION = "ALPACA_PAPER_ORDER"
 
 
@@ -32,6 +33,7 @@ class AlpacaPaperStrategyPolicy:
     maximum_bar_range_bps: float = 150.0
     maximum_order_notional_usd: float = 25.0
     maximum_observation_age_seconds: float = 180.0
+    maximum_market_clock_age_seconds: float = 30.0
     maximum_future_skew_seconds: float = 30.0
 
     def __post_init__(self) -> None:
@@ -49,6 +51,7 @@ class AlpacaPaperStrategyPolicy:
             ("maximum_bar_range_bps", self.maximum_bar_range_bps),
             ("maximum_order_notional_usd", self.maximum_order_notional_usd),
             ("maximum_observation_age_seconds", self.maximum_observation_age_seconds),
+            ("maximum_market_clock_age_seconds", self.maximum_market_clock_age_seconds),
         ):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or float(value) <= 0:
                 raise ValueError(f"{name} must be finite and positive")
@@ -106,6 +109,7 @@ def _strategy_policy_fingerprint(policy: AlpacaPaperStrategyPolicy) -> str:
             format(float(policy.maximum_bar_range_bps), ".17g"),
             format(float(policy.maximum_order_notional_usd), ".17g"),
             format(float(policy.maximum_observation_age_seconds), ".17g"),
+            format(float(policy.maximum_market_clock_age_seconds), ".17g"),
             format(float(policy.maximum_future_skew_seconds), ".17g"),
         )
     )
@@ -224,23 +228,35 @@ def _reservation(
     return TradingOrderReservationResult(risk, reservation)
 
 
+def _market_clock_status(*, timestamp: datetime, is_open: bool, now_utc: datetime, policy: AlpacaPaperStrategyPolicy) -> str | None:
+    age_seconds = (now_utc - timestamp).total_seconds()
+    if age_seconds > policy.maximum_market_clock_age_seconds:
+        return "STALE_MARKET_CLOCK"
+    if age_seconds < -policy.maximum_future_skew_seconds:
+        return "FUTURE_MARKET_CLOCK"
+    if not is_open:
+        return "MARKET_CLOSED"
+    return None
+
+
 def run_alpaca_paper_once(
     *, credentials: AlpacaPaperCredentials, account_id: str, symbol: str,
     ledger: SideEffectLedger, policy: AlpacaPaperStrategyPolicy,
-    market_request_fn: Callable = _default_request, account_request_fn: Callable = _default_request,
-    order_request_fn: Callable = _default_request, timeout_seconds: float = 10.0,
-    now_utc: datetime | None = None,
+    market_request_fn: Callable = _default_request, clock_request_fn: Callable = _default_request,
+    account_request_fn: Callable = _default_request, order_request_fn: Callable = _default_request,
+    timeout_seconds: float = 10.0, now_utc: datetime | None = None,
 ) -> AlpacaPaperRuntimeResult:
     """Fetch one real observation and drive at most one idempotent Alpaca PAPER order.
 
     Existing UNKNOWN effects are reconciled before any retry. SUCCEEDED effects are
     returned as-is only after immutable action/target/payload binding is verified.
-    A new external order side effect additionally requires a matching, active,
-    unblocked paper account with sufficient current buying power. Account safety
-    failures leave the internal reservation retryable and never submit an order.
+    New order side effects require a fresh Alpaca paper market clock reporting the
+    market open, then a matching active/unblocked paper account with sufficient
+    current buying power. Safety-gate failures never create a new side-effect row.
     """
 
     _target(account_id)
+    trusted_now = _utc_datetime(now_utc)
     observation = fetch_latest_iex_bar(
         credentials=credentials, symbol=symbol, timeout_seconds=timeout_seconds,
         request_fn=market_request_fn,
@@ -248,33 +264,58 @@ def run_alpaca_paper_once(
     if observation is None:
         return AlpacaPaperRuntimeResult("NO_OBSERVATION", None, None, None)
 
-    decision = evaluate_paper_observation(observation=observation, policy=policy, now_utc=now_utc)
+    decision = evaluate_paper_observation(observation=observation, policy=policy, now_utc=trusted_now)
     if decision.action == "HOLD":
         return AlpacaPaperRuntimeResult("HOLD", observation, decision, None)
 
     assert decision.client_order_id is not None and decision.order is not None
-    reservation = _reservation(
-        ledger=ledger, account_id=account_id, observation=observation,
-        policy=policy, decision=decision,
+    reservation: TradingOrderReservationResult | None = None
+    persisted = ledger.get(decision.client_order_id)
+    if persisted is not None:
+        reservation = _reservation(
+            ledger=ledger, account_id=account_id, observation=observation,
+            policy=policy, decision=decision,
+        )
+        current = reservation.reservation
+        if current.state == "SUCCEEDED":
+            return AlpacaPaperRuntimeResult("ALREADY_SUCCEEDED", observation, decision, current)
+        if current.state == "UNKNOWN":
+            reconciled = reconcile_unknown_trading_order(
+                ledger=ledger,
+                idempotency_key=decision.client_order_id,
+                reconcile=lambda: reconcile_paper_order(
+                    credentials=credentials, client_order_id=decision.client_order_id,
+                    timeout_seconds=timeout_seconds, request_fn=order_request_fn,
+                ),
+            )
+            return AlpacaPaperRuntimeResult(
+                "RECONCILED" if reconciled.state == "SUCCEEDED" else "RECONCILE_REQUIRED",
+                observation, decision, reconciled,
+            )
+        if current.state == "EXECUTING":
+            return AlpacaPaperRuntimeResult("RECONCILE_REQUIRED", observation, decision, current)
+
+    market_clock = fetch_paper_market_clock(
+        credentials=credentials,
+        timeout_seconds=timeout_seconds,
+        request_fn=clock_request_fn,
     )
-    current = reservation.reservation
-    if current.state == "SUCCEEDED":
-        return AlpacaPaperRuntimeResult("ALREADY_SUCCEEDED", observation, decision, current)
-    if current.state == "UNKNOWN":
-        reconciled = reconcile_unknown_trading_order(
-            ledger=ledger,
-            idempotency_key=decision.client_order_id,
-            reconcile=lambda: reconcile_paper_order(
-                credentials=credentials, client_order_id=decision.client_order_id,
-                timeout_seconds=timeout_seconds, request_fn=order_request_fn,
-            ),
-        )
+    if market_clock is None:
         return AlpacaPaperRuntimeResult(
-            "RECONCILED" if reconciled.state == "SUCCEEDED" else "RECONCILE_REQUIRED",
-            observation, decision, reconciled,
+            "MARKET_CLOCK_UNAVAILABLE", observation, decision,
+            reservation.reservation if reservation is not None else None,
         )
-    if current.state == "EXECUTING":
-        return AlpacaPaperRuntimeResult("RECONCILE_REQUIRED", observation, decision, current)
+    clock_block = _market_clock_status(
+        timestamp=market_clock.timestamp,
+        is_open=market_clock.is_open,
+        now_utc=trusted_now,
+        policy=policy,
+    )
+    if clock_block is not None:
+        return AlpacaPaperRuntimeResult(
+            clock_block, observation, decision,
+            reservation.reservation if reservation is not None else None,
+        )
 
     account = fetch_paper_account_snapshot(
         credentials=credentials,
@@ -283,13 +324,28 @@ def run_alpaca_paper_once(
         request_fn=account_request_fn,
     )
     if account is None:
-        return AlpacaPaperRuntimeResult("ACCOUNT_UNAVAILABLE", observation, decision, current)
+        return AlpacaPaperRuntimeResult(
+            "ACCOUNT_UNAVAILABLE", observation, decision,
+            reservation.reservation if reservation is not None else None,
+        )
     if not account.trading_enabled:
-        return AlpacaPaperRuntimeResult("ACCOUNT_NOT_TRADABLE", observation, decision, current)
+        return AlpacaPaperRuntimeResult(
+            "ACCOUNT_NOT_TRADABLE", observation, decision,
+            reservation.reservation if reservation is not None else None,
+        )
 
     required_notional = observation.close * policy.quantity_shares
     if not math.isfinite(required_notional) or account.buying_power_usd < required_notional:
-        return AlpacaPaperRuntimeResult("INSUFFICIENT_BUYING_POWER", observation, decision, current)
+        return AlpacaPaperRuntimeResult(
+            "INSUFFICIENT_BUYING_POWER", observation, decision,
+            reservation.reservation if reservation is not None else None,
+        )
+
+    if reservation is None:
+        reservation = _reservation(
+            ledger=ledger, account_id=account_id, observation=observation,
+            policy=policy, decision=decision,
+        )
 
     effect = execute_reserved_trading_order(
         reservation,

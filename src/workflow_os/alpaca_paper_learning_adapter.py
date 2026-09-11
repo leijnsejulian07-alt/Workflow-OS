@@ -50,6 +50,16 @@ def _finite_decimal(value: object, *, field: str) -> Decimal:
     return number
 
 
+def _sha256(value: object, *, field: str) -> str:
+    if not isinstance(value, str) or len(value) != 64 or value.lower() != value:
+        raise ValueError(f"{field} must be a lowercase sha256 digest")
+    try:
+        int(value, 16)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be a lowercase sha256 digest") from exc
+    return value
+
+
 @dataclass(frozen=True)
 class AlpacaPaperLearningContext:
     strategy_family: str
@@ -97,6 +107,77 @@ class AlpacaPaperLearningContext:
                 - _utc(self.validation_start, field="validation_start")
             ).days,
         )
+
+
+def _validate_curve(curve: AlpacaPaperEquityCurve) -> tuple[Decimal, Decimal]:
+    _bounded_text(curve.strategy_id, field="strategy_id")
+    _sha256(curve.strategy_policy_fingerprint, field="strategy_policy_fingerprint")
+    if curve.proves_received_cash is not False:
+        raise ValueError("paper equity may not prove received cash")
+    if curve.proves_realized_cash_pnl is not False:
+        raise ValueError("paper equity may not prove realized cash pnl")
+    if curve.may_enter_live_execution is not False:
+        raise ValueError("paper equity may not grant live execution")
+    if not isinstance(curve.trade_count, int) or isinstance(curve.trade_count, bool) or curve.trade_count < 0:
+        raise ValueError("paper equity trade count is invalid")
+    if curve.trade_count != len(curve.points):
+        raise ValueError("paper equity trade count is inconsistent")
+
+    starting = _finite_decimal(curve.starting_equity_usd, field="starting_equity_usd")
+    ending = _finite_decimal(curve.ending_equity_usd, field="ending_equity_usd")
+    net_pnl = _finite_decimal(curve.net_paper_pnl_usd, field="net_paper_pnl_usd")
+    costs = _finite_decimal(curve.modeled_execution_costs_usd, field="modeled_execution_costs_usd")
+    drawdown = _finite_decimal(curve.max_drawdown_pct, field="max_drawdown_pct")
+    if starting <= 0:
+        raise ValueError("starting_equity_usd must be positive")
+    if costs < 0:
+        raise ValueError("modeled_execution_costs_usd must be nonnegative")
+    if ending != starting + net_pnl:
+        raise ValueError("paper equity ending balance is inconsistent")
+    if drawdown < 0 or drawdown > 100:
+        raise ValueError("max_drawdown_pct must be between 0 and 100")
+
+    cumulative = Decimal("0")
+    peak = starting
+    recomputed_max_drawdown = Decimal("0")
+    previous_time: datetime | None = None
+    seen_pairs: set[tuple[str, str]] = set()
+    for point in curve.points:
+        occurred = _utc(point.occurred_at, field="equity_point.occurred_at")
+        if previous_time is not None and occurred <= previous_time:
+            raise ValueError("paper equity points must be strictly chronological")
+        previous_time = occurred
+        opening_id = _bounded_text(point.opening_client_order_id, field="opening_client_order_id")
+        closing_id = _bounded_text(point.closing_client_order_id, field="closing_client_order_id")
+        if opening_id == closing_id:
+            raise ValueError("paper equity order pair is invalid")
+        pair = (opening_id, closing_id)
+        if pair in seen_pairs:
+            raise ValueError("paper equity order pair is duplicated")
+        seen_pairs.add(pair)
+        _bounded_text(point.symbol, field="symbol")
+        pnl = _finite_decimal(point.paper_realized_pnl_usd, field="point.paper_realized_pnl_usd")
+        cumulative += pnl
+        point_cumulative = _finite_decimal(point.cumulative_pnl_usd, field="point.cumulative_pnl_usd")
+        point_equity = _finite_decimal(point.equity_usd, field="point.equity_usd")
+        point_drawdown = _finite_decimal(point.drawdown_pct, field="point.drawdown_pct")
+        if point_cumulative != cumulative:
+            raise ValueError("paper equity cumulative pnl is inconsistent")
+        if point_equity != starting + cumulative:
+            raise ValueError("paper equity point balance is inconsistent")
+        if point_equity > peak:
+            peak = point_equity
+        expected_drawdown = Decimal("100") if point_equity <= 0 else (peak - point_equity) / peak * Decimal("100")
+        if point_drawdown != expected_drawdown:
+            raise ValueError("paper equity point drawdown is inconsistent")
+        if point_drawdown > recomputed_max_drawdown:
+            recomputed_max_drawdown = point_drawdown
+
+    if cumulative != net_pnl:
+        raise ValueError("paper equity net pnl is inconsistent")
+    if recomputed_max_drawdown != drawdown:
+        raise ValueError("paper equity max drawdown is inconsistent")
+    return net_pnl, drawdown
 
 
 def _curve_fingerprint(curve: AlpacaPaperEquityCurve, context: AlpacaPaperLearningContext) -> str:
@@ -149,18 +230,7 @@ def evaluate_alpaca_paper_equity_curve(
     policy = policy or PaperLearningPolicy()
     if policy.policy_version != PAPER_LEARNING_POLICY_VERSION:
         raise ValueError("unsupported paper learning policy version")
-    if curve.proves_received_cash is not False:
-        raise ValueError("paper equity may not prove received cash")
-    if curve.proves_realized_cash_pnl is not False:
-        raise ValueError("paper equity may not prove realized cash pnl")
-    if curve.may_enter_live_execution is not False:
-        raise ValueError("paper equity may not grant live execution")
-    if curve.trade_count != len(curve.points):
-        raise ValueError("paper equity trade count is inconsistent")
-    net_pnl = _finite_decimal(curve.net_paper_pnl_usd, field="net_paper_pnl_usd")
-    drawdown = _finite_decimal(curve.max_drawdown_pct, field="max_drawdown_pct")
-    if drawdown < 0 or drawdown > 100:
-        raise ValueError("max_drawdown_pct must be between 0 and 100")
+    net_pnl, drawdown = _validate_curve(curve)
 
     fingerprint = _curve_fingerprint(curve, context)
     hard_failures: list[str] = []

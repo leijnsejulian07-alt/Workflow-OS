@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import MutableMapping
 
 from workflow_os.connector_state import AuthMethod, ConnectorHealth, ConnectorState
+from workflow_os.project_scope import ScopedAccessContext, ScopedResourceRef
 
 
 IMPORTANT_HEALTH = {
@@ -27,11 +28,15 @@ class ConnectorNotice:
     code: str
     message: str
     settings_anchor: str
+    scope_ref: ScopedResourceRef
     important: bool = True
+
+    def require_context(self, context: ScopedAccessContext) -> None:
+        self.scope_ref.require_context(context)
 
 
 class ConnectorNoticeStore:
-    """Persistent, secret-free dismissal state for Captain connector notices."""
+    """Persistent, secret-free, project/epoch-scoped dismissal state."""
 
     def __init__(
         self,
@@ -41,13 +46,27 @@ class ConnectorNoticeStore:
         self._backend = backend if backend is not None else {}
         self._reminder_interval = reminder_interval
 
-    def dismiss(self, notice: ConnectorNotice, *, now: datetime | None = None) -> None:
+    def dismiss(
+        self,
+        notice: ConnectorNotice,
+        *,
+        context: ScopedAccessContext,
+        now: datetime | None = None,
+    ) -> None:
+        notice.require_context(context)
         now = now or datetime.now(timezone.utc)
         self._backend[self._dismissal_key(notice)] = (
             now + self._reminder_interval
         ).isoformat()
 
-    def is_dismissed(self, notice: ConnectorNotice, *, now: datetime | None = None) -> bool:
+    def is_dismissed(
+        self,
+        notice: ConnectorNotice,
+        *,
+        context: ScopedAccessContext,
+        now: datetime | None = None,
+    ) -> bool:
+        notice.require_context(context)
         raw = self._backend.get(self._dismissal_key(notice))
         if not raw:
             return False
@@ -58,33 +77,62 @@ class ConnectorNoticeStore:
         now = now or datetime.now(timezone.utc)
         return until > now
 
-    def clear_resolved(self, active_notices: list[ConnectorNotice]) -> None:
+    def clear_resolved(
+        self,
+        active_notices: list[ConnectorNotice],
+        *,
+        context: ScopedAccessContext,
+    ) -> None:
+        for notice in active_notices:
+            notice.require_context(context)
         active = {self._dismissal_key(n) for n in active_notices}
+        prefix = self._context_prefix(context)
         for key in list(self._backend):
-            if key.startswith("connector_notice:") and key not in active:
+            if key.startswith(prefix) and key not in active:
                 del self._backend[key]
 
     @staticmethod
-    def _dismissal_key(notice: ConnectorNotice) -> str:
-        return f"connector_notice:{notice.connector_id}:{notice.code}"
+    def _context_prefix(context: ScopedAccessContext) -> str:
+        return (
+            f"connector_notice:{context.scope.digest}:"
+            f"{context.state_epoch}:"
+        )
+
+    @classmethod
+    def _dismissal_key(cls, notice: ConnectorNotice) -> str:
+        return (
+            f"connector_notice:{notice.scope_ref.scope_digest}:"
+            f"{notice.scope_ref.state_epoch}:"
+            f"{notice.connector_id}:{notice.code}"
+        )
 
 
 def build_connector_notices(
     state: ConnectorState,
+    *,
+    context: ScopedAccessContext,
     requirement: ConnectorRequirement | None = None,
 ) -> list[ConnectorNotice]:
-    """Return actionable Settings notices without exposing auth material."""
+    """Return actionable Settings notices bound to the current Captain scope/epoch."""
+    if not isinstance(context, ScopedAccessContext):
+        raise ValueError("explicit ScopedAccessContext required")
     req = requirement or ConnectorRequirement()
     notices: list[ConnectorNotice] = []
     anchor = f"/settings/connectors/{state.connector_id}"
 
     def add(code: str, message: str, important: bool = True) -> None:
+        ref = ScopedResourceRef.bind(
+            context=context,
+            resource_kind="connector_notice",
+            resource_id=f"{state.connector_id}:{code}",
+        )
         notices.append(ConnectorNotice(
             notice_id=f"{state.connector_id}:{code}",
             connector_id=state.connector_id,
             code=code,
             message=message,
             settings_anchor=anchor,
+            scope_ref=ref,
             important=important,
         ))
 
@@ -122,9 +170,13 @@ def visible_connector_notices(
     notices: list[ConnectorNotice],
     store: ConnectorNoticeStore,
     *,
+    context: ScopedAccessContext,
     now: datetime | None = None,
 ) -> list[ConnectorNotice]:
-    return [n for n in notices if not store.is_dismissed(n, now=now)]
+    return [
+        n for n in notices
+        if not store.is_dismissed(n, context=context, now=now)
+    ]
 
 
 def _version_lt(current: str, minimum: str) -> bool:

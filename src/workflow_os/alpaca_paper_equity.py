@@ -104,9 +104,9 @@ def build_alpaca_paper_equity_curve(
 ) -> AlpacaPaperEquityCurve:
     """Build a paper-only realized-equity curve from immutable closed-position evidence.
 
-    Repeated observations of the exact same closed position are deduplicated. If the
-    same opening/closing order pair ever appears with different accounting content,
-    aggregation fails closed instead of silently double-counting or rewriting P&L.
+    Evidence is isolated by the exact strategy-policy fingerprint, not only by the
+    human strategy id. Repeated observations of the exact same closed position are
+    deduplicated. Conflicting accounting for one opening/closing pair fails closed.
     """
     if not isinstance(audit_ledger, AuditRevenueLedger):
         raise TypeError("audit_ledger must be AuditRevenueLedger")
@@ -130,7 +130,7 @@ def build_alpaca_paper_equity_curve(
         if payload.get("strategy_id") != strategy_policy.strategy_id:
             raise ValueError("closed-position evidence strategy mismatch")
         if payload.get("strategy_policy_fingerprint") != strategy_fingerprint:
-            raise ValueError("closed-position evidence strategy policy mismatch")
+            continue
         if payload.get("position_accounting_policy_version") != ALPACA_PAPER_POSITION_ACCOUNTING_POLICY_VERSION:
             raise ValueError("closed-position accounting policy mismatch")
         if payload.get("position_evidence_policy_version") != ALPACA_PAPER_POSITION_EVIDENCE_POLICY_VERSION:

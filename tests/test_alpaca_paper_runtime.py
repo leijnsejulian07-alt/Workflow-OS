@@ -25,6 +25,19 @@ def market_ok(request, timeout):
     return _HttpResult(200, json.dumps(body).encode(), "market-rid", "application/json")
 
 
+def account_ok(request, timeout):
+    body = {
+        "id": "paper-account",
+        "status": "ACTIVE",
+        "currency": "USD",
+        "buying_power": "1000.00",
+        "trading_blocked": False,
+        "account_blocked": False,
+        "trade_suspended_by_user": False,
+    }
+    return _HttpResult(200, json.dumps(body).encode(), "account-rid", "application/json")
+
+
 class AlpacaPaperRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -56,6 +69,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=self.policy,
             market_request_fn=market_ok,
+            account_request_fn=account_ok,
             order_request_fn=order_ok,
             now_utc=self.now_utc,
         )
@@ -70,6 +84,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=self.policy,
             market_request_fn=market_ok,
+            account_request_fn=account_ok,
             order_request_fn=order_ok,
             now_utc=self.now_utc,
         )
@@ -98,11 +113,15 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=self.policy,
             market_request_fn=market_ok,
+            account_request_fn=account_ok,
             order_request_fn=order_ambiguous_then_found,
             now_utc=self.now_utc,
         )
         self.assertEqual(first.status, "EXECUTED")
         self.assertEqual(first.side_effect.state, "UNKNOWN")
+
+        def forbidden_account(request, timeout):
+            raise AssertionError("UNKNOWN reconciliation must remain read-only and bypass new-order account gating")
 
         second = run_alpaca_paper_once(
             credentials=self.credentials,
@@ -111,6 +130,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=self.policy,
             market_request_fn=market_ok,
+            account_request_fn=forbidden_account,
             order_request_fn=order_ambiguous_then_found,
             now_utc=self.now_utc,
         )
@@ -123,8 +143,8 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             body = {"bar": {"t": "2026-09-11T00:00:00Z", "o": 100.0, "h": 100.1, "l": 99.0, "c": 99.5, "v": 1000, "n": 10, "vw": 99.7}}
             return _HttpResult(200, json.dumps(body).encode(), "market-rid", "application/json")
 
-        def forbidden_order(request, timeout):
-            raise AssertionError("order transport must not be called")
+        def forbidden(request, timeout):
+            raise AssertionError("account/order transport must not be called")
 
         result = run_alpaca_paper_once(
             credentials=self.credentials,
@@ -133,7 +153,8 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=self.policy,
             market_request_fn=market_bearish,
-            order_request_fn=forbidden_order,
+            account_request_fn=forbidden,
+            order_request_fn=forbidden,
             now_utc=self.now_utc,
         )
         self.assertEqual(result.status, "HOLD")
@@ -144,8 +165,8 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             strategy_id="minute-body-v1", quantity_shares=1.0, maximum_order_notional_usd=25.0
         )
 
-        def forbidden_order(request, timeout):
-            raise AssertionError("order transport must not be called")
+        def forbidden(request, timeout):
+            raise AssertionError("account/order transport must not be called")
 
         result = run_alpaca_paper_once(
             credentials=self.credentials,
@@ -154,15 +175,16 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=policy,
             market_request_fn=market_ok,
-            order_request_fn=forbidden_order,
+            account_request_fn=forbidden,
+            order_request_fn=forbidden,
             now_utc=self.now_utc,
         )
         self.assertEqual(result.status, "HOLD")
         self.assertEqual(result.decision.reason, "ORDER_NOTIONAL_RISK_LIMIT")
 
     def test_stale_observation_holds_before_order_transport(self):
-        def forbidden_order(request, timeout):
-            raise AssertionError("order transport must not be called for stale market data")
+        def forbidden(request, timeout):
+            raise AssertionError("account/order transport must not be called for stale market data")
 
         result = run_alpaca_paper_once(
             credentials=self.credentials,
@@ -171,7 +193,8 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=self.policy,
             market_request_fn=market_ok,
-            order_request_fn=forbidden_order,
+            account_request_fn=forbidden,
+            order_request_fn=forbidden,
             now_utc=datetime(2026, 9, 11, 0, 3, 1, tzinfo=timezone.utc),
         )
         self.assertEqual(result.status, "HOLD")
@@ -194,8 +217,8 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             }
             return _HttpResult(200, json.dumps(body).encode(), "market-rid", "application/json")
 
-        def forbidden_order(request, timeout):
-            raise AssertionError("order transport must not be called for future market data")
+        def forbidden(request, timeout):
+            raise AssertionError("account/order transport must not be called for future market data")
 
         result = run_alpaca_paper_once(
             credentials=self.credentials,
@@ -204,7 +227,8 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             ledger=self.ledger,
             policy=self.policy,
             market_request_fn=market_future,
-            order_request_fn=forbidden_order,
+            account_request_fn=forbidden,
+            order_request_fn=forbidden,
             now_utc=self.now_utc,
         )
         self.assertEqual(result.status, "HOLD")

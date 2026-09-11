@@ -11,6 +11,7 @@ from workflow_os.alpaca_paper_execution_costs import evaluate_paper_execution_ec
 from workflow_os.alpaca_paper_fill_provenance import verify_alpaca_paper_curve_fill_provenance
 from workflow_os.alpaca_paper_funded_readiness import (
     AlpacaPaperValidationWindow,
+    build_alpaca_paper_validation_window,
     evaluate_alpaca_funded_readiness,
 )
 from workflow_os.alpaca_paper_learning_adapter import AlpacaPaperLearningContext
@@ -47,7 +48,7 @@ class AlpacaPaperFundedReadinessReverificationTests(unittest.TestCase):
             terminal=True,
         )
 
-    def test_evaluator_reverifies_underscore_constructed_window_against_ledger(self):
+    def _evidence_fixture(self):
         opening = self._outcome(
             client_order_id="open-forge",
             side="buy",
@@ -84,14 +85,6 @@ class AlpacaPaperFundedReadinessReverificationTests(unittest.TestCase):
             strategy_policy=self.strategy_policy,
             starting_equity_usd="1000",
         )
-        real_provenance = verify_alpaca_paper_curve_fill_provenance(
-            audit_ledger=self.audit,
-            strategy_policy=self.strategy_policy,
-            curve=curve,
-        )
-        forged_provenance = (
-            replace(real_provenance[0], opening_filled_at="2026-08-10T11:00:00+00:00"),
-        )
         context = AlpacaPaperLearningContext(
             strategy_family="momentum",
             strategy_version="v1",
@@ -102,16 +95,6 @@ class AlpacaPaperFundedReadinessReverificationTests(unittest.TestCase):
             market_regimes=("trend", "range"),
             observed_at="2026-08-11T01:00:00Z",
         )
-
-        forged_window = AlpacaPaperValidationWindow._from_verified_provenance(
-            audit_ledger=self.audit,
-            strategy_policy=self.strategy_policy,
-            curve=curve,
-            context=context,
-            train_start="2026-08-01T00:00:00Z",
-            train_end="2026-08-10T00:00:00Z",
-            fill_provenance=forged_provenance,
-        )
         policy = PaperLearningPolicy(
             min_validation_trades=1,
             min_validation_days=1,
@@ -121,12 +104,55 @@ class AlpacaPaperFundedReadinessReverificationTests(unittest.TestCase):
             min_green_windows_for_funded_ready=1,
             min_total_oos_days_for_funded_ready=1,
         )
+        return curve, context, policy
+
+    def test_evaluator_reverifies_underscore_constructed_window_against_ledger(self):
+        curve, context, policy = self._evidence_fixture()
+        real_provenance = verify_alpaca_paper_curve_fill_provenance(
+            audit_ledger=self.audit,
+            strategy_policy=self.strategy_policy,
+            curve=curve,
+        )
+        forged_provenance = (
+            replace(real_provenance[0], opening_filled_at="2026-08-10T11:00:00+00:00"),
+        )
+        forged_window = AlpacaPaperValidationWindow._from_verified_provenance(
+            audit_ledger=self.audit,
+            strategy_policy=self.strategy_policy,
+            curve=curve,
+            context=context,
+            train_start="2026-08-01T00:00:00Z",
+            train_end="2026-08-10T00:00:00Z",
+            fill_provenance=forged_provenance,
+        )
 
         with self.assertRaisesRegex(
             ValueError,
             "validation window provenance does not match immutable ledger evidence",
         ):
             evaluate_alpaca_funded_readiness((forged_window,), policy)
+
+    def test_evaluator_revalidates_mutated_oos_boundaries_against_real_fills(self):
+        curve, context, policy = self._evidence_fixture()
+        window = build_alpaca_paper_validation_window(
+            audit_ledger=self.audit,
+            strategy_policy=self.strategy_policy,
+            curve=curve,
+            context=context,
+            train_start="2026-08-01T00:00:00Z",
+            train_end="2026-08-10T00:00:00Z",
+        )
+        mutated_context = replace(
+            context,
+            validation_start="2026-08-10T10:15:00Z",
+        )
+        object.__setattr__(window, "context", mutated_context)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "paper position fills fall outside its validation window",
+        ):
+            evaluate_alpaca_funded_readiness((window,), policy)
 
 
 if __name__ == "__main__":

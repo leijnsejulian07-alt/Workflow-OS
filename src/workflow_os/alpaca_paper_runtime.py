@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from .alpaca_market_data import AlpacaLatestBarObservation, fetch_latest_iex_bar
+from .alpaca_paper_account import fetch_paper_account_snapshot
 from .alpaca_paper_transport import (
     AlpacaPaperCredentials,
     AlpacaPaperOrder,
@@ -226,15 +227,17 @@ def _reservation(
 def run_alpaca_paper_once(
     *, credentials: AlpacaPaperCredentials, account_id: str, symbol: str,
     ledger: SideEffectLedger, policy: AlpacaPaperStrategyPolicy,
-    market_request_fn: Callable = _default_request, order_request_fn: Callable = _default_request,
-    timeout_seconds: float = 10.0, now_utc: datetime | None = None,
+    market_request_fn: Callable = _default_request, account_request_fn: Callable = _default_request,
+    order_request_fn: Callable = _default_request, timeout_seconds: float = 10.0,
+    now_utc: datetime | None = None,
 ) -> AlpacaPaperRuntimeResult:
     """Fetch one real observation and drive at most one idempotent Alpaca PAPER order.
 
     Existing UNKNOWN effects are reconciled before any retry. SUCCEEDED effects are
-    returned as-is only after the immutable action/target/payload binding is verified.
-    No code path accepts a live Alpaca base URL or live credentials. Stale or materially
-    future-dated market observations fail closed before reservation.
+    returned as-is only after immutable action/target/payload binding is verified.
+    A new external order side effect additionally requires a matching, active,
+    unblocked paper account with sufficient current buying power. Account safety
+    failures leave the internal reservation retryable and never submit an order.
     """
 
     _target(account_id)
@@ -272,6 +275,21 @@ def run_alpaca_paper_once(
         )
     if current.state == "EXECUTING":
         return AlpacaPaperRuntimeResult("RECONCILE_REQUIRED", observation, decision, current)
+
+    account = fetch_paper_account_snapshot(
+        credentials=credentials,
+        expected_account_id=account_id,
+        timeout_seconds=timeout_seconds,
+        request_fn=account_request_fn,
+    )
+    if account is None:
+        return AlpacaPaperRuntimeResult("ACCOUNT_UNAVAILABLE", observation, decision, current)
+    if not account.trading_enabled:
+        return AlpacaPaperRuntimeResult("ACCOUNT_NOT_TRADABLE", observation, decision, current)
+
+    required_notional = observation.close * policy.quantity_shares
+    if not math.isfinite(required_notional) or account.buying_power_usd < required_notional:
+        return AlpacaPaperRuntimeResult("INSUFFICIENT_BUYING_POWER", observation, decision, current)
 
     effect = execute_reserved_trading_order(
         reservation,

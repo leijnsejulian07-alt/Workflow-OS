@@ -55,11 +55,11 @@ class AlpacaPaperEquityTests(unittest.TestCase):
             ),
         )
 
-    def _record(self, position, occurred_at):
+    def _record(self, position, occurred_at, *, policy=None):
         return record_alpaca_paper_position_evidence(
             audit_ledger=self.audit,
             account_id="paper-account",
-            strategy_policy=self.policy,
+            strategy_policy=policy or self.policy,
             position=position,
             occurred_at=occurred_at,
         )
@@ -120,20 +120,43 @@ class AlpacaPaperEquityTests(unittest.TestCase):
                 starting_equity_usd="1000",
             )
 
-    def test_strategy_policy_fingerprint_mismatch_fails_closed(self):
-        position = self._position(prefix="policy", opening_reference="100", closing_reference="110")
-        self._record(position, "2026-09-11T10:05:00Z")
+    def test_exact_strategy_policy_fingerprint_isolated_from_same_strategy_id(self):
+        original_position = self._position(
+            prefix="policy-original",
+            opening_reference="100",
+            closing_reference="110",
+        )
+        changed_position = self._position(
+            prefix="policy-changed",
+            opening_reference="100",
+            closing_reference="90",
+        )
         changed_policy = AlpacaPaperStrategyPolicy(
             strategy_id="minute-body-v1",
             minimum_body_bps=6.0,
         )
+        self._record(original_position, "2026-09-11T10:05:00Z")
+        self._record(
+            changed_position,
+            "2026-09-11T11:05:00Z",
+            policy=changed_policy,
+        )
 
-        with self.assertRaisesRegex(ValueError, "strategy policy mismatch"):
-            build_alpaca_paper_equity_curve(
-                audit_ledger=self.audit,
-                strategy_policy=changed_policy,
-                starting_equity_usd="1000",
-            )
+        original_curve = build_alpaca_paper_equity_curve(
+            audit_ledger=self.audit,
+            strategy_policy=self.policy,
+            starting_equity_usd="1000",
+        )
+        changed_curve = build_alpaca_paper_equity_curve(
+            audit_ledger=self.audit,
+            strategy_policy=changed_policy,
+            starting_equity_usd="1000",
+        )
+
+        self.assertEqual(original_curve.trade_count, 1)
+        self.assertEqual(original_curve.net_paper_pnl_usd, Decimal("19.370"))
+        self.assertEqual(changed_curve.trade_count, 1)
+        self.assertLess(changed_curve.net_paper_pnl_usd, Decimal("0"))
 
     def test_broken_audit_hash_chain_fails_closed(self):
         position = self._position(prefix="tamper", opening_reference="100", closing_reference="110")

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 
 from .alpaca_paper_runtime import (
     ALPACA_PAPER_RUNTIME_POLICY_VERSION,
     AlpacaPaperRuntimeResult,
     AlpacaPaperStrategyPolicy,
+    _strategy_policy_fingerprint,
 )
 from .audit import AuditRevenueLedger
 
@@ -38,12 +39,8 @@ def _canonical_account_id(value: object) -> str:
 
 
 def _policy_fingerprint(policy: AlpacaPaperStrategyPolicy) -> str:
-    if not isinstance(policy, AlpacaPaperStrategyPolicy):
-        raise TypeError("policy must be AlpacaPaperStrategyPolicy")
-    payload = asdict(policy)
-    payload["runtime_policy_version"] = ALPACA_PAPER_RUNTIME_POLICY_VERSION
-    material = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+    """Use the exact runtime/side-effect policy identity for audit provenance."""
+    return _strategy_policy_fingerprint(policy)
 
 
 def record_alpaca_paper_runtime_evidence(

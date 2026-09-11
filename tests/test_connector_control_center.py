@@ -55,7 +55,11 @@ def test_snapshot_uses_scoped_dismissal_state() -> None:
     context_a = ctx("chat-a", "project-a", "owner/repo", 1)
     context_b = ctx("chat-a", "project-b", "owner/repo", 1)
     store = ConnectorNoticeStore()
-    state = ConnectorState(connector_id="github", installed=True)
+    state = ConnectorState(
+        connector_id="github",
+        installed=True,
+        required_permissions=frozenset({"repo:read"}),
+    )
     now = datetime(2026, 9, 11, 20, 0, tzinfo=timezone.utc)
 
     first = build_connector_control_center_snapshot(

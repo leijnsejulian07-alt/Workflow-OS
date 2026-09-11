@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Callable
 
 from .alpaca_market_data import AlpacaLatestBarObservation, fetch_latest_iex_bar
@@ -29,6 +30,8 @@ class AlpacaPaperStrategyPolicy:
     minimum_body_bps: float = 5.0
     maximum_bar_range_bps: float = 150.0
     maximum_order_notional_usd: float = 25.0
+    maximum_observation_age_seconds: float = 180.0
+    maximum_future_skew_seconds: float = 30.0
 
     def __post_init__(self) -> None:
         if (
@@ -44,9 +47,18 @@ class AlpacaPaperStrategyPolicy:
             ("minimum_body_bps", self.minimum_body_bps),
             ("maximum_bar_range_bps", self.maximum_bar_range_bps),
             ("maximum_order_notional_usd", self.maximum_order_notional_usd),
+            ("maximum_observation_age_seconds", self.maximum_observation_age_seconds),
         ):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or float(value) <= 0:
                 raise ValueError(f"{name} must be finite and positive")
+        future_skew = self.maximum_future_skew_seconds
+        if (
+            isinstance(future_skew, bool)
+            or not isinstance(future_skew, (int, float))
+            or not math.isfinite(float(future_skew))
+            or float(future_skew) < 0
+        ):
+            raise ValueError("maximum_future_skew_seconds must be finite and nonnegative")
 
 
 @dataclass(frozen=True)
@@ -86,15 +98,36 @@ def _client_order_id(*, policy: AlpacaPaperStrategyPolicy, observation: AlpacaLa
     return f"wfos-paper-{hashlib.sha256(raw).hexdigest()[:32]}"
 
 
+def _utc_datetime(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.now(timezone.utc)
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("now_utc must be timezone-aware")
+    return value.astimezone(timezone.utc)
+
+
+def _observation_datetime(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00") if value.endswith("Z") else datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
 def evaluate_paper_observation(
-    *, observation: AlpacaLatestBarObservation, policy: AlpacaPaperStrategyPolicy
+    *,
+    observation: AlpacaLatestBarObservation,
+    policy: AlpacaPaperStrategyPolicy,
+    now_utc: datetime | None = None,
 ) -> AlpacaPaperDecision:
     """Deterministic, deliberately simple paper-only candidate strategy.
 
     This is learning instrumentation, not a profitability claim. V1 permits only a
-    small long BUY when the verified minute bar closes sufficiently above its open,
-    the close is not below VWAP, the bar has trades, and bounded volatility/notional
-    gates pass. Every other case fails closed to HOLD. Short selling is unreachable.
+    small long BUY when the verified minute bar is fresh, closes sufficiently above
+    its open, is not below VWAP, has trades, and bounded volatility/notional gates
+    pass. Every other case fails closed to HOLD. Short selling is unreachable.
     """
 
     if not isinstance(observation, AlpacaLatestBarObservation):
@@ -103,6 +136,16 @@ def evaluate_paper_observation(
         raise ValueError("policy must be a validated AlpacaPaperStrategyPolicy")
     if observation.feed != "iex":
         return AlpacaPaperDecision("HOLD", "UNAPPROVED_MARKET_DATA_FEED")
+
+    observed_at = _observation_datetime(observation.timestamp)
+    if observed_at is None:
+        return AlpacaPaperDecision("HOLD", "INVALID_OBSERVATION_TIMESTAMP")
+    age_seconds = (_utc_datetime(now_utc) - observed_at).total_seconds()
+    if age_seconds > policy.maximum_observation_age_seconds:
+        return AlpacaPaperDecision("HOLD", "STALE_MARKET_OBSERVATION")
+    if age_seconds < -policy.maximum_future_skew_seconds:
+        return AlpacaPaperDecision("HOLD", "FUTURE_MARKET_OBSERVATION")
+
     if observation.volume <= 0 or observation.trade_count <= 0:
         return AlpacaPaperDecision("HOLD", "INSUFFICIENT_MARKET_ACTIVITY")
 
@@ -163,12 +206,13 @@ def run_alpaca_paper_once(
     *, credentials: AlpacaPaperCredentials, account_id: str, symbol: str,
     ledger: SideEffectLedger, policy: AlpacaPaperStrategyPolicy,
     market_request_fn: Callable = _default_request, order_request_fn: Callable = _default_request,
-    timeout_seconds: float = 10.0,
+    timeout_seconds: float = 10.0, now_utc: datetime | None = None,
 ) -> AlpacaPaperRuntimeResult:
     """Fetch one real observation and drive at most one idempotent Alpaca PAPER order.
 
     Existing UNKNOWN effects are reconciled before any retry. SUCCEEDED effects are
     returned as-is. No code path accepts a live Alpaca base URL or live credentials.
+    Stale or materially future-dated market observations fail closed before reservation.
     """
 
     expected_target = _target(account_id)
@@ -179,7 +223,7 @@ def run_alpaca_paper_once(
     if observation is None:
         return AlpacaPaperRuntimeResult("NO_OBSERVATION", None, None, None)
 
-    decision = evaluate_paper_observation(observation=observation, policy=policy)
+    decision = evaluate_paper_observation(observation=observation, policy=policy, now_utc=now_utc)
     if decision.action == "HOLD":
         return AlpacaPaperRuntimeResult("HOLD", observation, decision, None)
 

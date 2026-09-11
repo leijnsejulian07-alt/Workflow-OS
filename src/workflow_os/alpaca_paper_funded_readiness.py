@@ -142,12 +142,13 @@ def build_alpaca_paper_validation_window(
 
 
 def _reverify_window_provenance(window: AlpacaPaperValidationWindow) -> None:
-    """Re-bind a stored window to its immutable ledger before any readiness decision.
+    """Re-bind a stored window and its boundaries before any readiness decision.
 
-    Python callers can technically reach underscore-prefixed helpers or manufacture
-    objects in-process. Readiness therefore never trusts the stored provenance tuple
-    as authority: it is recomputed from the attached immutable audit ledger and exact
-    strategy policy on every evaluation.
+    Python callers can technically reach underscore-prefixed helpers or use
+    ``object.__setattr__`` against frozen dataclasses. Readiness therefore trusts
+    neither the stored provenance tuple nor the stored OOS/train boundaries as
+    authority: immutable provenance is recomputed and the current boundaries are
+    checked again on every evaluation.
     """
     provenance = verify_alpaca_paper_curve_fill_provenance(
         audit_ledger=window.audit_ledger,
@@ -156,6 +157,29 @@ def _reverify_window_provenance(window: AlpacaPaperValidationWindow) -> None:
     )
     if provenance != window.fill_provenance:
         raise ValueError("validation window provenance does not match immutable ledger evidence")
+
+    train_start = _utc(window.train_start, field="train_start")
+    train_end = _utc(window.train_end, field="train_end")
+    validation_start = _utc(window.context.validation_start, field="validation_start")
+    validation_end = _utc(window.context.validation_end, field="validation_end")
+    if not train_start < train_end <= validation_start < validation_end:
+        raise ValueError("train and validation windows must be chronological and non-overlapping")
+    if len(provenance) != len(window.curve.points):
+        raise ValueError("fill provenance must map exactly once to every equity point")
+
+    expected_pairs = tuple(
+        (point.opening_client_order_id, point.closing_client_order_id)
+        for point in window.curve.points
+    )
+    actual_pairs: list[tuple[str, str]] = []
+    for item in provenance:
+        actual_pairs.append((item.opening_client_order_id, item.closing_client_order_id))
+        opening = _utc(item.opening_filled_at, field="opening_filled_at")
+        closing = _utc(item.closing_filled_at, field="closing_filled_at")
+        if not validation_start <= opening < closing < validation_end:
+            raise ValueError("paper position fills fall outside its validation window")
+    if tuple(actual_pairs) != expected_pairs:
+        raise ValueError("fill provenance order pairs do not match the paper equity curve")
 
 
 def evaluate_alpaca_funded_readiness(

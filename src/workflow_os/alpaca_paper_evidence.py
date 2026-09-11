@@ -52,12 +52,13 @@ def record_alpaca_paper_runtime_evidence(
     account_id: str,
     policy: AlpacaPaperStrategyPolicy,
     result: AlpacaPaperRuntimeResult,
+    occurred_at: str,
 ) -> AlpacaPaperEvidenceReceipt:
     """Append one idempotent paper-runtime result to the shared audit chain.
 
     The record contains no credentials and can never prove received cash or grant
-    live execution authority. Identity is deterministic from account, strategy
-    policy, observation, client order identity and resulting side-effect state.
+    live execution authority. ``occurred_at`` is explicit so failures without a
+    market observation are still deterministic under replay.
     """
     if not isinstance(audit_ledger, AuditRevenueLedger):
         raise TypeError("audit_ledger must be AuditRevenueLedger")
@@ -66,6 +67,8 @@ def record_alpaca_paper_runtime_evidence(
         raise TypeError("policy must be AlpacaPaperStrategyPolicy")
     if not isinstance(result, AlpacaPaperRuntimeResult):
         raise TypeError("result must be AlpacaPaperRuntimeResult")
+    if not isinstance(occurred_at, str) or not occurred_at.strip() or occurred_at != occurred_at.strip():
+        raise ValueError("occurred_at must be a canonical timezone-aware timestamp")
 
     observation = result.observation
     decision = result.decision
@@ -117,6 +120,7 @@ def record_alpaca_paper_runtime_evidence(
         "account_id": account_id,
         "strategy_policy_fingerprint": payload["strategy_policy_fingerprint"],
         "runtime_status": result.status,
+        "occurred_at": occurred_at,
         "observation_timestamp": None if observation is None else observation.timestamp,
         "client_order_id": None if decision is None else decision.client_order_id,
         "side_effect_state": None if side_effect is None else side_effect.state,
@@ -126,7 +130,6 @@ def record_alpaca_paper_runtime_evidence(
         json.dumps(identity_material, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     event_id = f"alpaca-paper-runtime:{identity}"
-    occurred_at = None if observation is None else observation.timestamp
     event_hash = audit_ledger.append_event(
         event_id,
         "trading.alpaca_paper_runtime",

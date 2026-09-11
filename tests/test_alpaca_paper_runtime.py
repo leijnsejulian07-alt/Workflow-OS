@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from workflow_os.alpaca_paper_runtime import AlpacaPaperStrategyPolicy, run_alpaca_paper_once
@@ -30,6 +31,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
         self.ledger = SideEffectLedger(Path(self.tmp.name) / "effects.db")
         self.credentials = AlpacaPaperCredentials("paper-key", "paper-secret")
         self.policy = AlpacaPaperStrategyPolicy(strategy_id="minute-body-v1")
+        self.now_utc = datetime(2026, 9, 11, 0, 1, tzinfo=timezone.utc)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -55,6 +57,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             policy=self.policy,
             market_request_fn=market_ok,
             order_request_fn=order_ok,
+            now_utc=self.now_utc,
         )
         self.assertEqual(first.status, "EXECUTED")
         self.assertEqual(first.side_effect.state, "SUCCEEDED")
@@ -68,6 +71,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             policy=self.policy,
             market_request_fn=market_ok,
             order_request_fn=order_ok,
+            now_utc=self.now_utc,
         )
         self.assertEqual(second.status, "ALREADY_SUCCEEDED")
         self.assertEqual(calls, ["POST"])
@@ -95,6 +99,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             policy=self.policy,
             market_request_fn=market_ok,
             order_request_fn=order_ambiguous_then_found,
+            now_utc=self.now_utc,
         )
         self.assertEqual(first.status, "EXECUTED")
         self.assertEqual(first.side_effect.state, "UNKNOWN")
@@ -107,6 +112,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             policy=self.policy,
             market_request_fn=market_ok,
             order_request_fn=order_ambiguous_then_found,
+            now_utc=self.now_utc,
         )
         self.assertEqual(second.status, "RECONCILED")
         self.assertEqual(second.side_effect.state, "SUCCEEDED")
@@ -128,6 +134,7 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             policy=self.policy,
             market_request_fn=market_bearish,
             order_request_fn=forbidden_order,
+            now_utc=self.now_utc,
         )
         self.assertEqual(result.status, "HOLD")
         self.assertEqual(result.decision.reason, "NO_LONG_SIGNAL")
@@ -148,9 +155,61 @@ class AlpacaPaperRuntimeTests(unittest.TestCase):
             policy=policy,
             market_request_fn=market_ok,
             order_request_fn=forbidden_order,
+            now_utc=self.now_utc,
         )
         self.assertEqual(result.status, "HOLD")
         self.assertEqual(result.decision.reason, "ORDER_NOTIONAL_RISK_LIMIT")
+
+    def test_stale_observation_holds_before_order_transport(self):
+        def forbidden_order(request, timeout):
+            raise AssertionError("order transport must not be called for stale market data")
+
+        result = run_alpaca_paper_once(
+            credentials=self.credentials,
+            account_id="paper-account",
+            symbol="AAPL",
+            ledger=self.ledger,
+            policy=self.policy,
+            market_request_fn=market_ok,
+            order_request_fn=forbidden_order,
+            now_utc=datetime(2026, 9, 11, 0, 3, 1, tzinfo=timezone.utc),
+        )
+        self.assertEqual(result.status, "HOLD")
+        self.assertEqual(result.decision.reason, "STALE_MARKET_OBSERVATION")
+        self.assertIsNone(result.side_effect)
+
+    def test_future_observation_holds_before_order_transport(self):
+        def market_future(request, timeout):
+            body = {
+                "bar": {
+                    "t": "2026-09-11T00:02:00Z",
+                    "o": 100.0,
+                    "h": 101.0,
+                    "l": 99.9,
+                    "c": 100.2,
+                    "v": 1000,
+                    "n": 10,
+                    "vw": 100.1,
+                }
+            }
+            return _HttpResult(200, json.dumps(body).encode(), "market-rid", "application/json")
+
+        def forbidden_order(request, timeout):
+            raise AssertionError("order transport must not be called for future market data")
+
+        result = run_alpaca_paper_once(
+            credentials=self.credentials,
+            account_id="paper-account",
+            symbol="AAPL",
+            ledger=self.ledger,
+            policy=self.policy,
+            market_request_fn=market_future,
+            order_request_fn=forbidden_order,
+            now_utc=self.now_utc,
+        )
+        self.assertEqual(result.status, "HOLD")
+        self.assertEqual(result.decision.reason, "FUTURE_MARKET_OBSERVATION")
+        self.assertIsNone(result.side_effect)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from workflow_os.alpaca_paper_runtime import (
     AlpacaPaperDecision,
     AlpacaPaperRuntimeResult,
     AlpacaPaperStrategyPolicy,
+    _strategy_policy_fingerprint,
 )
 from workflow_os.audit import AuditRevenueLedger
 from workflow_os.side_effects import SideEffectRecord
@@ -72,10 +74,18 @@ class AlpacaPaperEvidenceTests(unittest.TestCase):
         self.assertFalse(first.may_enter_live_execution)
         self.assertTrue(self.audit.verify_audit_chain())
         with sqlite3.connect(self.path) as db:
+            row = db.execute(
+                "SELECT event_json FROM audit_events WHERE event_type='trading.alpaca_paper_runtime'"
+            ).fetchone()
             count = db.execute(
                 "SELECT COUNT(*) FROM audit_events WHERE event_type='trading.alpaca_paper_runtime'"
             ).fetchone()[0]
         self.assertEqual(count, 1)
+        payload = json.loads(row[0])
+        self.assertEqual(
+            payload["strategy_policy_fingerprint"],
+            _strategy_policy_fingerprint(self.policy),
+        )
 
     def test_no_observation_failure_is_replay_deterministic(self):
         result = AlpacaPaperRuntimeResult("NO_OBSERVATION", None, None, None)

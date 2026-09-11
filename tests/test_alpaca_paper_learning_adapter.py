@@ -11,7 +11,7 @@ from workflow_os.trading_paper_learning import PaperLearningPolicy
 
 
 class AlpacaPaperLearningAdapterTests(unittest.TestCase):
-    def _curve(self, *, pnl="50", drawdown="2", trade_count=60):
+    def _curve(self, *, pnl="50", trade_count=60):
         points = tuple(
             AlpacaPaperEquityPoint(
                 occurred_at=f"2026-09-{1 + (index // 24):02d}T{index % 24:02d}:00:00+00:00",
@@ -32,9 +32,47 @@ class AlpacaPaperLearningAdapterTests(unittest.TestCase):
             ending_equity_usd=Decimal("1000") + Decimal(pnl),
             net_paper_pnl_usd=Decimal(pnl),
             modeled_execution_costs_usd=Decimal("5"),
-            max_drawdown_pct=Decimal(drawdown),
+            max_drawdown_pct=Decimal("0"),
             trade_count=trade_count,
             points=points,
+        )
+
+    def _drawdown_curve(self):
+        points = []
+        cumulative = Decimal("0")
+        peak = Decimal("1000")
+        max_drawdown = Decimal("0")
+        for index in range(60):
+            pnl = Decimal("200") if index == 0 else -(Decimal("150") / Decimal("59"))
+            cumulative += pnl
+            equity = Decimal("1000") + cumulative
+            if equity > peak:
+                peak = equity
+            drawdown = (peak - equity) / peak * Decimal("100")
+            if drawdown > max_drawdown:
+                max_drawdown = drawdown
+            points.append(
+                AlpacaPaperEquityPoint(
+                    occurred_at=f"2026-09-{1 + (index // 24):02d}T{index % 24:02d}:00:00+00:00",
+                    symbol="AAPL",
+                    opening_client_order_id=f"dd-open-{index}",
+                    closing_client_order_id=f"dd-close-{index}",
+                    paper_realized_pnl_usd=pnl,
+                    cumulative_pnl_usd=cumulative,
+                    equity_usd=equity,
+                    drawdown_pct=drawdown,
+                )
+            )
+        return AlpacaPaperEquityCurve(
+            strategy_id="minute-body-v1",
+            strategy_policy_fingerprint="a" * 64,
+            starting_equity_usd=Decimal("1000"),
+            ending_equity_usd=Decimal("1050"),
+            net_paper_pnl_usd=Decimal("50"),
+            modeled_execution_costs_usd=Decimal("5"),
+            max_drawdown_pct=max_drawdown,
+            trade_count=60,
+            points=tuple(points),
         )
 
     def _context(self, **overrides):
@@ -71,9 +109,9 @@ class AlpacaPaperLearningAdapterTests(unittest.TestCase):
         self.assertEqual(decision.state, "PAPER_RED")
         self.assertIn("NON_POSITIVE_NET_PAPER_PNL", decision.reasons)
 
-    def test_drawdown_breach_is_red(self):
+    def test_execution_derived_drawdown_breach_is_red(self):
         decision = evaluate_alpaca_paper_equity_curve(
-            curve=self._curve(drawdown="8.01"),
+            curve=self._drawdown_curve(),
             context=self._context(),
         )
 
@@ -142,6 +180,19 @@ class AlpacaPaperLearningAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "trade count"):
             evaluate_alpaca_paper_equity_curve(
                 curve=replace(self._curve(), trade_count=61),
+                context=self._context(),
+            )
+
+    def test_tampered_equity_accounting_fails_closed(self):
+        curve = self._curve()
+        with self.assertRaisesRegex(ValueError, "ending balance"):
+            evaluate_alpaca_paper_equity_curve(
+                curve=replace(curve, ending_equity_usd=Decimal("9999")),
+                context=self._context(),
+            )
+        with self.assertRaisesRegex(ValueError, "max drawdown"):
+            evaluate_alpaca_paper_equity_curve(
+                curve=replace(curve, max_drawdown_pct=Decimal("1")),
                 context=self._context(),
             )
 

@@ -13,6 +13,7 @@ ALPACA_PAPER_POSITION_ACCOUNTING_POLICY_VERSION = "alpaca-paper-position-account
 
 @dataclass(frozen=True)
 class AlpacaPaperClosedLongPosition:
+    symbol: str
     opening_client_order_id: str
     closing_client_order_id: str
     closed_qty: Decimal
@@ -37,9 +38,9 @@ def match_closed_long_paper_position(
     """Fail closed unless two paper executions fully close one long position.
 
     The first supported accounting slice is deliberately narrow: one complete buy
-    fill matched to one complete sell fill of exactly the same quantity. Partial
-    inventory, scale-in/scale-out, shorts, and cross-policy matching are rejected
-    until a position inventory ledger can model them explicitly.
+    fill matched to one complete sell fill of exactly the same symbol and quantity.
+    Partial inventory, scale-in/scale-out, shorts, and cross-policy matching are
+    rejected until a position inventory ledger can model them explicitly.
     """
     if not isinstance(opening, AlpacaPaperExecutionEconomics):
         raise TypeError("opening must be AlpacaPaperExecutionEconomics")
@@ -51,6 +52,8 @@ def match_closed_long_paper_position(
         raise ValueError("closing execution cost policy version mismatch")
     if opening.side != "buy" or closing.side != "sell":
         raise ValueError("closed long paper position requires buy then sell")
+    if not opening.symbol or not closing.symbol or opening.symbol != closing.symbol:
+        raise ValueError("closed paper position requires identical symbol provenance")
     if not opening.client_order_id or not closing.client_order_id:
         raise ValueError("paper executions require client order ids")
     if opening.client_order_id == closing.client_order_id:
@@ -78,6 +81,7 @@ def match_closed_long_paper_position(
         raise ValueError("execution economics are internally inconsistent")
 
     return AlpacaPaperClosedLongPosition(
+        symbol=opening.symbol,
         opening_client_order_id=opening.client_order_id,
         closing_client_order_id=closing.client_order_id,
         closed_qty=opening.filled_qty,

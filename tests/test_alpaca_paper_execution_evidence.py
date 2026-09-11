@@ -75,6 +75,7 @@ class AlpacaPaperExecutionEvidenceTests(unittest.TestCase):
             payload["strategy_policy_fingerprint"],
             _strategy_policy_fingerprint(self.strategy_policy),
         )
+        self.assertEqual(payload["execution"]["symbol"], "AAPL")
         self.assertEqual(payload["execution"]["observed_adverse_slippage_bps"], "100")
         self.assertEqual(payload["execution"]["modeled_total_execution_cost_usd"], "2.101")
         self.assertEqual(payload["execution"]["modeled_net_cash_flow_usd"], "-202.101")

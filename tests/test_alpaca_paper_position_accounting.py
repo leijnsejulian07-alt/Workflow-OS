@@ -12,11 +12,11 @@ from workflow_os.alpaca_paper_position_accounting import (
 
 
 class AlpacaPaperPositionAccountingTests(unittest.TestCase):
-    def _outcome(self, *, client_order_id, side, price, qty="2"):
+    def _outcome(self, *, client_order_id, side, price, qty="2", symbol="AAPL"):
         return AlpacaPaperOrderOutcome(
             external_order_id=f"external-{client_order_id}",
             client_order_id=client_order_id,
-            symbol="AAPL",
+            symbol=symbol,
             side=side,
             status="filled",
             ordered_qty=Decimal(qty),
@@ -27,13 +27,23 @@ class AlpacaPaperPositionAccountingTests(unittest.TestCase):
             terminal=True,
         )
 
-    def _economics(self, *, client_order_id, side, reference, fill=None, qty="2"):
+    def _economics(
+        self,
+        *,
+        client_order_id,
+        side,
+        reference,
+        fill=None,
+        qty="2",
+        symbol="AAPL",
+    ):
         return evaluate_paper_execution_economics(
             outcome=self._outcome(
                 client_order_id=client_order_id,
                 side=side,
                 price=fill if fill is not None else reference,
                 qty=qty,
+                symbol=symbol,
             ),
             reference_price=reference,
         )
@@ -52,6 +62,7 @@ class AlpacaPaperPositionAccountingTests(unittest.TestCase):
 
         position = match_closed_long_paper_position(opening=opening, closing=closing)
 
+        self.assertEqual(position.symbol, "AAPL")
         self.assertEqual(position.closed_qty, Decimal("2"))
         self.assertEqual(position.gross_reference_pnl_usd, Decimal("20"))
         self.assertEqual(position.modeled_total_execution_cost_usd, Decimal("0.630"))
@@ -93,6 +104,23 @@ class AlpacaPaperPositionAccountingTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "partial inventory"):
+            match_closed_long_paper_position(opening=opening, closing=closing)
+
+    def test_cross_symbol_matching_fails_closed(self):
+        opening = self._economics(
+            client_order_id="open-aapl",
+            side="buy",
+            reference="100",
+            symbol="AAPL",
+        )
+        closing = self._economics(
+            client_order_id="close-msft",
+            side="sell",
+            reference="110",
+            symbol="MSFT",
+        )
+
+        with self.assertRaisesRegex(ValueError, "symbol provenance"):
             match_closed_long_paper_position(opening=opening, closing=closing)
 
     def test_wrong_direction_and_same_order_id_fail_closed(self):

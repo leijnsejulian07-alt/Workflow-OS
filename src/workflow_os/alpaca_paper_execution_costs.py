@@ -58,6 +58,7 @@ class AlpacaPaperExecutionCostPolicy:
 @dataclass(frozen=True)
 class AlpacaPaperExecutionEconomics:
     client_order_id: str
+    symbol: str
     side: str
     filled_qty: Decimal
     reference_price: Decimal
@@ -99,6 +100,8 @@ def evaluate_paper_execution_economics(
         raise ValueError("paper execution economics require validated fill evidence")
     if outcome.side not in {"buy", "sell"}:
         raise ValueError("unsupported paper order side")
+    if not isinstance(outcome.symbol, str) or not outcome.symbol.strip():
+        raise ValueError("paper execution economics require symbol provenance")
 
     reference = _finite_positive_decimal(reference_price, field="reference_price")
     fill_price = _finite_positive_decimal(outcome.filled_avg_price, field="filled_avg_price")
@@ -127,6 +130,7 @@ def evaluate_paper_execution_economics(
 
     return AlpacaPaperExecutionEconomics(
         client_order_id=outcome.client_order_id,
+        symbol=outcome.symbol.strip().upper(),
         side=outcome.side,
         filled_qty=filled_qty,
         reference_price=reference,

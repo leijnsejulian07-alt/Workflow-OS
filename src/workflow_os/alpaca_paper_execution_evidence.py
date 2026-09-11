@@ -60,6 +60,8 @@ def record_alpaca_paper_execution_economics_evidence(
         raise ValueError("paper execution economics may not prove cash or realized pnl")
     if economics.may_enter_live_execution:
         raise ValueError("paper execution economics may not grant live execution authority")
+    if not economics.symbol:
+        raise ValueError("paper execution economics require symbol provenance")
 
     strategy_fingerprint = _policy_fingerprint(strategy_policy)
     payload = {
@@ -74,6 +76,7 @@ def record_alpaca_paper_execution_economics_evidence(
         "execution_evidence_policy_version": ALPACA_PAPER_EXECUTION_EVIDENCE_POLICY_VERSION,
         "execution": {
             "client_order_id": economics.client_order_id,
+            "symbol": economics.symbol,
             "side": economics.side,
             "filled_qty": str(economics.filled_qty),
             "reference_price": str(economics.reference_price),
@@ -98,6 +101,7 @@ def record_alpaca_paper_execution_economics_evidence(
         "account_id": account_id,
         "strategy_policy_fingerprint": strategy_fingerprint,
         "client_order_id": economics.client_order_id,
+        "symbol": economics.symbol,
         "side": economics.side,
         "filled_qty": str(economics.filled_qty),
         "reference_price": str(economics.reference_price),

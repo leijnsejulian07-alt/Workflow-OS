@@ -9,7 +9,6 @@ from .alpaca_market_data import AlpacaLatestBarObservation, fetch_latest_iex_bar
 from .alpaca_paper_transport import (
     AlpacaPaperCredentials,
     AlpacaPaperOrder,
-    _HttpResult,
     _default_request,
     reconcile_paper_order,
     submit_paper_order,
@@ -32,8 +31,14 @@ class AlpacaPaperStrategyPolicy:
     maximum_order_notional_usd: float = 25.0
 
     def __post_init__(self) -> None:
-        if not isinstance(self.strategy_id, str) or not self.strategy_id.strip() or len(self.strategy_id) > 100:
-            raise ValueError("strategy_id is required and bounded")
+        if (
+            not isinstance(self.strategy_id, str)
+            or not self.strategy_id.strip()
+            or self.strategy_id != self.strategy_id.strip()
+            or len(self.strategy_id) > 100
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in self.strategy_id)
+        ):
+            raise ValueError("strategy_id is required, canonical and bounded")
         for name, value in (
             ("quantity_shares", self.quantity_shares),
             ("minimum_body_bps", self.minimum_body_bps),
@@ -58,6 +63,22 @@ class AlpacaPaperRuntimeResult:
     observation: AlpacaLatestBarObservation | None
     decision: AlpacaPaperDecision | None
     side_effect: SideEffectRecord | None
+
+
+def _validated_account_id(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or value != value.strip()
+        or len(value) > 200
+        or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+    ):
+        raise ValueError("paper account_id is required, canonical and bounded")
+    return value
+
+
+def _target(account_id: str) -> str:
+    return f"ALPACA_PAPER:{_validated_account_id(account_id)}"
 
 
 def _client_order_id(*, policy: AlpacaPaperStrategyPolicy, observation: AlpacaLatestBarObservation) -> str:
@@ -114,15 +135,14 @@ def _reservation(
 ) -> TradingOrderReservationResult:
     if decision.action != "BUY" or decision.order is None or decision.client_order_id is None:
         raise RuntimeError("only an approved paper BUY may be reserved")
-    if not isinstance(account_id, str) or not account_id.strip() or account_id != account_id.strip() or len(account_id) > 200:
-        raise ValueError("paper account_id is required, canonical and bounded")
+    target = _target(account_id)
     risk = TradingOrderRiskDecision(
         "PASS_TO_SIDE_EFFECT_RESERVATION", (), True, ALPACA_PAPER_RUNTIME_POLICY_VERSION
     )
     reservation = ledger.reserve(
         idempotency_key=decision.client_order_id,
         action=ALPACA_PAPER_ACTION,
-        target=f"ALPACA_PAPER:{account_id}",
+        target=target,
         payload={
             "mode": "PAPER_ONLY",
             "strategy_id": policy.strategy_id,
@@ -151,6 +171,7 @@ def run_alpaca_paper_once(
     returned as-is. No code path accepts a live Alpaca base URL or live credentials.
     """
 
+    expected_target = _target(account_id)
     observation = fetch_latest_iex_bar(
         credentials=credentials, symbol=symbol, timeout_seconds=timeout_seconds,
         request_fn=market_request_fn,
@@ -164,6 +185,8 @@ def run_alpaca_paper_once(
 
     assert decision.client_order_id is not None and decision.order is not None
     current = ledger.get(decision.client_order_id)
+    if current is not None and (current.action != ALPACA_PAPER_ACTION or current.target != expected_target):
+        raise RuntimeError("paper side-effect identity is already bound to a different account or action")
     if current is not None and current.state == "SUCCEEDED":
         return AlpacaPaperRuntimeResult("ALREADY_SUCCEEDED", observation, decision, current)
     if current is not None and current.state == "UNKNOWN":

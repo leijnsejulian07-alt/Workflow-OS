@@ -93,8 +93,27 @@ def _target(account_id: str) -> str:
     return f"ALPACA_PAPER:{_validated_account_id(account_id)}"
 
 
+def _strategy_policy_fingerprint(policy: AlpacaPaperStrategyPolicy) -> str:
+    if not isinstance(policy, AlpacaPaperStrategyPolicy):
+        raise ValueError("policy must be a validated AlpacaPaperStrategyPolicy")
+    canonical = "|".join(
+        (
+            ALPACA_PAPER_RUNTIME_POLICY_VERSION,
+            policy.strategy_id,
+            format(float(policy.quantity_shares), ".17g"),
+            format(float(policy.minimum_body_bps), ".17g"),
+            format(float(policy.maximum_bar_range_bps), ".17g"),
+            format(float(policy.maximum_order_notional_usd), ".17g"),
+            format(float(policy.maximum_observation_age_seconds), ".17g"),
+            format(float(policy.maximum_future_skew_seconds), ".17g"),
+        )
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _client_order_id(*, policy: AlpacaPaperStrategyPolicy, observation: AlpacaLatestBarObservation) -> str:
-    raw = f"{ALPACA_PAPER_RUNTIME_POLICY_VERSION}|{policy.strategy_id}|{observation.symbol}|{observation.timestamp}".encode("utf-8")
+    policy_fingerprint = _strategy_policy_fingerprint(policy)
+    raw = f"{policy_fingerprint}|{observation.symbol}|{observation.timestamp}".encode("utf-8")
     return f"wfos-paper-{hashlib.sha256(raw).hexdigest()[:32]}"
 
 
@@ -179,6 +198,7 @@ def _reservation(
     if decision.action != "BUY" or decision.order is None or decision.client_order_id is None:
         raise RuntimeError("only an approved paper BUY may be reserved")
     target = _target(account_id)
+    policy_fingerprint = _strategy_policy_fingerprint(policy)
     risk = TradingOrderRiskDecision(
         "PASS_TO_SIDE_EFFECT_RESERVATION", (), True, ALPACA_PAPER_RUNTIME_POLICY_VERSION
     )
@@ -189,6 +209,7 @@ def _reservation(
         payload={
             "mode": "PAPER_ONLY",
             "strategy_id": policy.strategy_id,
+            "strategy_policy_fingerprint": policy_fingerprint,
             "policy_version": ALPACA_PAPER_RUNTIME_POLICY_VERSION,
             "symbol": observation.symbol,
             "observation_timestamp": observation.timestamp,
@@ -211,11 +232,12 @@ def run_alpaca_paper_once(
     """Fetch one real observation and drive at most one idempotent Alpaca PAPER order.
 
     Existing UNKNOWN effects are reconciled before any retry. SUCCEEDED effects are
-    returned as-is. No code path accepts a live Alpaca base URL or live credentials.
-    Stale or materially future-dated market observations fail closed before reservation.
+    returned as-is only after the immutable action/target/payload binding is verified.
+    No code path accepts a live Alpaca base URL or live credentials. Stale or materially
+    future-dated market observations fail closed before reservation.
     """
 
-    expected_target = _target(account_id)
+    _target(account_id)
     observation = fetch_latest_iex_bar(
         credentials=credentials, symbol=symbol, timeout_seconds=timeout_seconds,
         request_fn=market_request_fn,
@@ -228,12 +250,14 @@ def run_alpaca_paper_once(
         return AlpacaPaperRuntimeResult("HOLD", observation, decision, None)
 
     assert decision.client_order_id is not None and decision.order is not None
-    current = ledger.get(decision.client_order_id)
-    if current is not None and (current.action != ALPACA_PAPER_ACTION or current.target != expected_target):
-        raise RuntimeError("paper side-effect identity is already bound to a different account or action")
-    if current is not None and current.state == "SUCCEEDED":
+    reservation = _reservation(
+        ledger=ledger, account_id=account_id, observation=observation,
+        policy=policy, decision=decision,
+    )
+    current = reservation.reservation
+    if current.state == "SUCCEEDED":
         return AlpacaPaperRuntimeResult("ALREADY_SUCCEEDED", observation, decision, current)
-    if current is not None and current.state == "UNKNOWN":
+    if current.state == "UNKNOWN":
         reconciled = reconcile_unknown_trading_order(
             ledger=ledger,
             idempotency_key=decision.client_order_id,
@@ -246,13 +270,9 @@ def run_alpaca_paper_once(
             "RECONCILED" if reconciled.state == "SUCCEEDED" else "RECONCILE_REQUIRED",
             observation, decision, reconciled,
         )
-    if current is not None and current.state == "EXECUTING":
+    if current.state == "EXECUTING":
         return AlpacaPaperRuntimeResult("RECONCILE_REQUIRED", observation, decision, current)
 
-    reservation = _reservation(
-        ledger=ledger, account_id=account_id, observation=observation,
-        policy=policy, decision=decision,
-    )
     effect = execute_reserved_trading_order(
         reservation,
         ledger=ledger,

@@ -55,22 +55,12 @@ def _decimal(value: object, *, field: str, positive: bool = False, nonnegative: 
 
 
 def _read_events(audit_ledger: AuditRevenueLedger, *, strategy_id: str) -> list[sqlite3.Row]:
-    if not audit_ledger.verify_audit_chain():
-        raise ValueError("audit chain verification failed")
-    db = sqlite3.connect(audit_ledger.path, timeout=5.0)
-    db.row_factory = sqlite3.Row
-    try:
-        return db.execute(
-            """
-            SELECT event_type, occurred_at, event_json
-            FROM audit_events
-            WHERE event_type IN (?, ?) AND subject_id=?
-            ORDER BY occurred_at ASC, id ASC
-            """,
-            (_OUTCOME_EVENT_TYPE, _POSITION_EVENT_TYPE, strategy_id),
-        ).fetchall()
-    finally:
-        db.close()
+    return [
+        row
+        for row in audit_ledger.verified_audit_events()
+        if row["event_type"] in {_OUTCOME_EVENT_TYPE, _POSITION_EVENT_TYPE}
+        and row["subject_id"] == strategy_id
+    ]
 
 
 def verify_alpaca_paper_curve_fill_provenance(

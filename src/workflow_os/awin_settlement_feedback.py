@@ -9,7 +9,10 @@ import re
 from typing import Any, Mapping
 
 from .awin_transaction_evidence import AwinTransactionEvidence
-from .plaid_bank_receipt import PlaidBankReceiptEvidence
+from .plaid_bank_receipt import (
+    PlaidBankReceiptEvidence,
+    verify_plaid_bank_receipt_evidence,
+)
 from .reconciliation import ReconciledEvent, RevenueReconciliationLedger
 from .scaling_control import ScalingDirective, scaling_directive
 
@@ -121,8 +124,7 @@ def normalize_awin_payout_allocation(
         raise ValueError("raw Awin payout allocation must be a mapping")
     if not isinstance(transaction, AwinTransactionEvidence):
         raise TypeError("transaction must be AwinTransactionEvidence")
-    if not isinstance(bank_receipt, PlaidBankReceiptEvidence):
-        raise TypeError("bank_receipt must be PlaidBankReceiptEvidence")
+    bank_receipt = verify_plaid_bank_receipt_evidence(bank_receipt)
     if transaction.status != "approved":
         raise ValueError("only approved Awin transactions may be reconciled to payout")
     if transaction.commission_cents <= 0:

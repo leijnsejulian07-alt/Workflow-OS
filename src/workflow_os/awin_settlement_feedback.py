@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import hashlib
 import math
@@ -9,6 +9,7 @@ import re
 from typing import Any, Mapping
 
 from .awin_transaction_evidence import AwinTransactionEvidence
+from .plaid_bank_receipt import PlaidBankReceiptEvidence
 from .reconciliation import ReconciledEvent, RevenueReconciliationLedger
 from .scaling_control import ScalingDirective, scaling_directive
 
@@ -98,19 +99,30 @@ def _digest(value: object, name: str) -> str:
     return cleaned
 
 
-def normalize_awin_payout_allocation(
-    raw: Mapping[str, Any], *, transaction: AwinTransactionEvidence
-) -> AwinPayoutAllocationEvidence:
-    """Normalize payout allocation plus independent bank-receipt evidence.
+def _description_mentions_payment_id(description: str, payment_id: str) -> bool:
+    pattern = rf"(?<![A-Za-z0-9]){re.escape(payment_id)}(?![A-Za-z0-9])"
+    return re.search(pattern, description, flags=re.IGNORECASE) is not None
 
-    Awin transaction approval is deliberately insufficient. This boundary only
-    promotes cash when payment-history/self-billing allocation evidence and an
-    independently observed bank receipt agree on the exact approved transaction.
+
+def normalize_awin_payout_allocation(
+    raw: Mapping[str, Any],
+    *,
+    transaction: AwinTransactionEvidence,
+    bank_receipt: PlaidBankReceiptEvidence,
+    expected_bank_account_id: str,
+) -> AwinPayoutAllocationEvidence:
+    """Bind Awin payout evidence to independently normalized Plaid receipt evidence.
+
+    Caller-supplied bank hashes or references are never settlement authority. Cash can
+    only advance when the typed Plaid receipt matches the configured account, exact
+    amount, chronology, and an unambiguous Awin payment identifier in bank narration.
     """
     if not isinstance(raw, Mapping):
         raise ValueError("raw Awin payout allocation must be a mapping")
     if not isinstance(transaction, AwinTransactionEvidence):
         raise TypeError("transaction must be AwinTransactionEvidence")
+    if not isinstance(bank_receipt, PlaidBankReceiptEvidence):
+        raise TypeError("bank_receipt must be PlaidBankReceiptEvidence")
     if transaction.status != "approved":
         raise ValueError("only approved Awin transactions may be reconciled to payout")
     if transaction.commission_cents <= 0:
@@ -127,16 +139,29 @@ def normalize_awin_payout_allocation(
     if publisher_id != transaction.publisher_id:
         raise ValueError("Awin payout publisher identity mismatch")
     if raw.get("currency") != "EUR" or transaction.currency != "EUR":
-        raise ValueError("Awin settlement version 1 accepts EUR only")
+        raise ValueError("Awin settlement version 2 accepts EUR only")
 
     amount_cents = _amount_to_cents(raw.get("amount_eur"))
     if amount_cents != transaction.commission_cents:
         raise ValueError("Awin payout allocation amount does not match approved commission")
+    if bank_receipt.currency != "EUR" or bank_receipt.amount_cents != amount_cents:
+        raise ValueError("Plaid bank receipt amount/currency does not match Awin payout")
+
+    trusted_account_id = _identifier(expected_bank_account_id, "expected_bank_account_id")
+    if bank_receipt.account_id != trusted_account_id:
+        raise ValueError("Plaid bank receipt account does not match configured settlement account")
 
     paid_at = _timestamp(raw.get("paid_at"), "paid_at")
-    bank_received_at = _timestamp(raw.get("bank_received_at"), "bank_received_at")
-    if datetime.fromisoformat(bank_received_at) < datetime.fromisoformat(paid_at):
+    paid_datetime = datetime.fromisoformat(paid_at)
+    posted_date = datetime.fromisoformat(bank_receipt.posted_date).date()
+    if posted_date < paid_datetime.date():
         raise ValueError("bank receipt cannot predate Awin payout")
+    if not _description_mentions_payment_id(bank_receipt.description, payment_id):
+        raise ValueError("Plaid bank receipt does not contain the exact Awin payment identity")
+
+    bank_received_at = datetime.combine(
+        posted_date, datetime.min.time(), tzinfo=timezone.utc
+    ).isoformat()
 
     return AwinPayoutAllocationEvidence(
         payment_id=payment_id,
@@ -147,13 +172,11 @@ def normalize_awin_payout_allocation(
         currency="EUR",
         paid_at=paid_at,
         bank_received_at=bank_received_at,
-        bank_reference=_identifier(raw.get("bank_reference"), "bank_reference"),
+        bank_reference=bank_receipt.transaction_id,
         payment_evidence_sha256=_digest(
             raw.get("payment_evidence_sha256"), "payment_evidence_sha256"
         ),
-        bank_evidence_sha256=_digest(
-            raw.get("bank_evidence_sha256"), "bank_evidence_sha256"
-        ),
+        bank_evidence_sha256=bank_receipt.evidence_sha256,
     )
 
 
@@ -161,6 +184,8 @@ def reconcile_awin_payout_and_decide_next_action(
     raw: Mapping[str, Any],
     *,
     transaction: AwinTransactionEvidence,
+    bank_receipt: PlaidBankReceiptEvidence,
+    expected_bank_account_id: str,
     reconciliation_ledger: RevenueReconciliationLedger,
     experiment_jobs: int = 1,
     keep_jobs: int = 1,
@@ -168,7 +193,12 @@ def reconcile_awin_payout_and_decide_next_action(
     min_samples_to_scale: int = 3,
     min_realized_profit_to_scale_eur: float = 25.0,
 ) -> AwinSettlementFeedbackResult:
-    payout = normalize_awin_payout_allocation(raw, transaction=transaction)
+    payout = normalize_awin_payout_allocation(
+        raw,
+        transaction=transaction,
+        bank_receipt=bank_receipt,
+        expected_bank_account_id=expected_bank_account_id,
+    )
 
     evidence_material = (
         payout.payment_evidence_sha256

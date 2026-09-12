@@ -5,12 +5,23 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from workflow_os.audit import AuditRevenueLedger
 from workflow_os.awin_settlement_feedback import (
     reconcile_awin_payout_and_decide_next_action,
 )
-from workflow_os.awin_transaction_evidence import AwinTransactionEvidence
+from workflow_os.awin_transaction_evidence import (
+    AwinTransactionEvidence,
+    record_awin_transaction_evidence,
+)
 from workflow_os.plaid_bank_receipt import normalize_plaid_bank_receipt
 from workflow_os.reconciliation import RevenueReconciliationLedger
+
+
+class _KnownOpportunityLedger:
+    def latest_decision(self, opportunity_id):
+        if opportunity_id == "opp-awin-1":
+            return {"opportunity_id": opportunity_id, "decision": "ACCEPT"}
+        return None
 
 
 class AwinSettlementFeedbackTests(unittest.TestCase):
@@ -57,12 +68,47 @@ class AwinSettlementFeedbackTests(unittest.TestCase):
         payload.update(overrides)
         return normalize_plaid_bank_receipt(payload)
 
-    def _reconcile(self, ledger, *, payout=None, transaction=None, bank_receipt=None, account_id="settlement-account-1"):
+    def _record_transaction(self, audit_ledger, transaction):
+        return record_awin_transaction_evidence(
+            {
+                "transaction_id": transaction.transaction_id,
+                "publisher_id": transaction.publisher_id,
+                "advertiser_id": transaction.advertiser_id,
+                "status": transaction.status,
+                "commission_eur": f"{transaction.commission_cents / 100:.2f}",
+                "currency": transaction.currency,
+                "transaction_at": transaction.transaction_at,
+                "validation_at": transaction.validation_at,
+                "click_ref": transaction.click_ref,
+                "evidence_sha256": transaction.evidence_sha256,
+            },
+            expected_opportunity_id=transaction.opportunity_id,
+            opportunity_ledger=_KnownOpportunityLedger(),
+            audit_ledger=audit_ledger,
+        )
+
+    def _reconcile(
+        self,
+        ledger,
+        *,
+        payout=None,
+        transaction=None,
+        bank_receipt=None,
+        account_id="settlement-account-1",
+        audit_ledger=None,
+        record_transaction=True,
+    ):
+        transaction = self._transaction() if transaction is None else transaction
+        if audit_ledger is None:
+            audit_ledger = AuditRevenueLedger(Path(ledger.path).with_name("audit.sqlite"))
+        if record_transaction:
+            self._record_transaction(audit_ledger, transaction)
         return reconcile_awin_payout_and_decide_next_action(
             self._payout() if payout is None else payout,
-            transaction=self._transaction() if transaction is None else transaction,
+            transaction=transaction,
             bank_receipt=self._bank_receipt() if bank_receipt is None else bank_receipt,
             expected_bank_account_id=account_id,
+            audit_ledger=audit_ledger,
             reconciliation_ledger=ledger,
         )
 
@@ -102,6 +148,34 @@ class AwinSettlementFeedbackTests(unittest.TestCase):
             ledger = RevenueReconciliationLedger(Path(tmp) / "reconciliation.sqlite")
             with self.assertRaisesRegex(ValueError, "digest mismatch"):
                 self._reconcile(ledger, bank_receipt=forged)
+            self.assertEqual(ledger.realized_summary("opp-awin-1").sample_count, 0)
+
+    def test_unrecorded_typed_awin_transaction_cannot_enter_cash_truth(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = RevenueReconciliationLedger(Path(tmp) / "reconciliation.sqlite")
+            forged = replace(self._transaction(), evidence_sha256="f" * 64)
+            with self.assertRaisesRegex(ValueError, "missing immutable audit evidence"):
+                self._reconcile(
+                    ledger,
+                    transaction=forged,
+                    record_transaction=False,
+                )
+            self.assertEqual(ledger.realized_summary("opp-awin-1").sample_count, 0)
+
+    def test_typed_awin_transaction_must_exactly_match_recorded_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = RevenueReconciliationLedger(Path(tmp) / "reconciliation.sqlite")
+            audit = AuditRevenueLedger(Path(tmp) / "audit.sqlite")
+            original = self._transaction()
+            self._record_transaction(audit, original)
+            forged = replace(original, commission_cents=9900)
+            with self.assertRaisesRegex(ValueError, "does not match immutable audit evidence"):
+                self._reconcile(
+                    ledger,
+                    transaction=forged,
+                    audit_ledger=audit,
+                    record_transaction=False,
+                )
             self.assertEqual(ledger.realized_summary("opp-awin-1").sample_count, 0)
 
     def test_non_approved_transaction_cannot_be_promoted_to_cash(self):

@@ -8,7 +8,11 @@ import math
 import re
 from typing import Any, Mapping
 
-from .awin_transaction_evidence import AwinTransactionEvidence
+from .audit import AuditRevenueLedger
+from .awin_transaction_evidence import (
+    AwinTransactionEvidence,
+    verify_recorded_awin_transaction_evidence,
+)
 from .plaid_bank_receipt import (
     PlaidBankReceiptEvidence,
     verify_plaid_bank_receipt_evidence,
@@ -113,6 +117,7 @@ def normalize_awin_payout_allocation(
     transaction: AwinTransactionEvidence,
     bank_receipt: PlaidBankReceiptEvidence,
     expected_bank_account_id: str,
+    audit_ledger: AuditRevenueLedger,
 ) -> AwinPayoutAllocationEvidence:
     """Bind Awin payout evidence to independently normalized Plaid receipt evidence.
 
@@ -122,8 +127,9 @@ def normalize_awin_payout_allocation(
     """
     if not isinstance(raw, Mapping):
         raise ValueError("raw Awin payout allocation must be a mapping")
-    if not isinstance(transaction, AwinTransactionEvidence):
-        raise TypeError("transaction must be AwinTransactionEvidence")
+    transaction = verify_recorded_awin_transaction_evidence(
+        transaction, audit_ledger=audit_ledger
+    )
     bank_receipt = verify_plaid_bank_receipt_evidence(bank_receipt)
     if transaction.status != "approved":
         raise ValueError("only approved Awin transactions may be reconciled to payout")
@@ -188,6 +194,7 @@ def reconcile_awin_payout_and_decide_next_action(
     transaction: AwinTransactionEvidence,
     bank_receipt: PlaidBankReceiptEvidence,
     expected_bank_account_id: str,
+    audit_ledger: AuditRevenueLedger,
     reconciliation_ledger: RevenueReconciliationLedger,
     experiment_jobs: int = 1,
     keep_jobs: int = 1,
@@ -200,6 +207,7 @@ def reconcile_awin_payout_and_decide_next_action(
         transaction=transaction,
         bank_receipt=bank_receipt,
         expected_bank_account_id=expected_bank_account_id,
+        audit_ledger=audit_ledger,
     )
 
     evidence_material = (

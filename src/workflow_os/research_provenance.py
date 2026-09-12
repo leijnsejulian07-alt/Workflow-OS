@@ -7,6 +7,9 @@ from urllib.parse import urlsplit, urlunsplit
 from .project_scope import ScopedAccessContext, ScopedResourceRef
 
 
+_EVIDENCE_RELATIONSHIPS = frozenset({"supports", "challenges", "context"})
+
+
 def _safe_source_url(url: str) -> str:
     if not isinstance(url, str):
         raise ValueError("source_url must be a string")
@@ -26,6 +29,13 @@ def _clean_text(value: str, field: str, *, max_len: int) -> str:
     return value
 
 
+def _clean_relationship(value: str) -> str:
+    value = _clean_text(value, "relationship", max_len=32).lower()
+    if value not in _EVIDENCE_RELATIONSHIPS:
+        raise ValueError("relationship must be supports, challenges, or context")
+    return value
+
+
 @dataclass(frozen=True)
 class ResearchEvidence:
     ref: ScopedResourceRef
@@ -33,9 +43,26 @@ class ResearchEvidence:
     source_url: str
     source_title: str
     excerpt_digest: str
+    relationship: str = "supports"
 
     def require_context(self, context: ScopedAccessContext) -> None:
         self.ref.require_context(context)
+
+
+@dataclass(frozen=True)
+class ClaimCoverage:
+    """Secret-free quality signal for one claim in one exact Captain authority context."""
+
+    claim_id: str
+    evidence_count: int
+    supporting_count: int
+    challenging_count: int
+    context_count: int
+    distinct_source_hosts: int
+
+    @property
+    def has_challenge(self) -> bool:
+        return self.challenging_count > 0
 
 
 class ResearchEvidenceLedger:
@@ -57,6 +84,7 @@ class ResearchEvidenceLedger:
         source_url: str,
         source_title: str,
         excerpt: str,
+        relationship: str = "supports",
     ) -> ResearchEvidence:
         if not isinstance(context, ScopedAccessContext):
             raise ValueError("explicit ScopedAccessContext required")
@@ -64,6 +92,7 @@ class ResearchEvidenceLedger:
         claim_id = _clean_text(claim_id, "claim_id", max_len=128)
         source_title = _clean_text(source_title, "source_title", max_len=512)
         excerpt = _clean_text(excerpt, "excerpt", max_len=20_000)
+        relationship = _clean_relationship(relationship)
         ref = ScopedResourceRef.bind(
             context=context,
             resource_kind="research-evidence",
@@ -75,6 +104,7 @@ class ResearchEvidenceLedger:
             source_url=_safe_source_url(source_url),
             source_title=source_title,
             excerpt_digest=sha256(excerpt.encode("utf-8")).hexdigest(),
+            relationship=relationship,
         )
         self._items[self._key(ref)] = item
         return item
@@ -108,3 +138,34 @@ class ResearchEvidenceLedger:
                 item.require_context(context)
                 found.append(item)
         return tuple(sorted(found, key=lambda item: item.ref.resource_id))
+
+    def list_for_claim(
+        self,
+        *,
+        context: ScopedAccessContext,
+        claim_id: str,
+    ) -> tuple[ResearchEvidence, ...]:
+        claim_id = _clean_text(claim_id, "claim_id", max_len=128)
+        return tuple(
+            item
+            for item in self.list_for_context(context=context)
+            if item.claim_id == claim_id
+        )
+
+    def coverage_for_claim(
+        self,
+        *,
+        context: ScopedAccessContext,
+        claim_id: str,
+    ) -> ClaimCoverage:
+        claim_id = _clean_text(claim_id, "claim_id", max_len=128)
+        evidence = self.list_for_claim(context=context, claim_id=claim_id)
+        hosts = {urlsplit(item.source_url).hostname for item in evidence}
+        return ClaimCoverage(
+            claim_id=claim_id,
+            evidence_count=len(evidence),
+            supporting_count=sum(item.relationship == "supports" for item in evidence),
+            challenging_count=sum(item.relationship == "challenges" for item in evidence),
+            context_count=sum(item.relationship == "context" for item in evidence),
+            distinct_source_hosts=len(hosts),
+        )

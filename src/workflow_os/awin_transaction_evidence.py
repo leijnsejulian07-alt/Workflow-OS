@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -141,20 +142,15 @@ def normalize_awin_transaction(
     )
 
 
-def record_awin_transaction_evidence(
-    raw: Mapping[str, Any],
-    *,
-    expected_opportunity_id: str,
-    opportunity_ledger: OpportunityLedger,
-    audit_ledger: AuditRevenueLedger,
-) -> AwinTransactionEvidence:
-    evidence = normalize_awin_transaction(
-        raw, expected_opportunity_id=expected_opportunity_id
+def _transaction_event_id(evidence: AwinTransactionEvidence) -> str:
+    event_material = (
+        f"awin:{evidence.publisher_id}:{evidence.transaction_id}:{evidence.status}"
     )
-    if opportunity_ledger.latest_decision(evidence.opportunity_id) is None:
-        raise ValueError("Awin transaction references an unknown Workflow OS opportunity")
+    return "awin-transaction:" + hashlib.sha256(event_material.encode("utf-8")).hexdigest()
 
-    payload = {
+
+def _transaction_audit_payload(evidence: AwinTransactionEvidence) -> dict[str, Any]:
+    return {
         "platform": "awin",
         "transaction_id": evidence.transaction_id,
         "opportunity_id": evidence.opportunity_id,
@@ -169,10 +165,77 @@ def record_awin_transaction_evidence(
         "evidence_sha256": evidence.evidence_sha256,
         "proves_received_cash": False,
     }
-    event_material = (
-        f"awin:{evidence.publisher_id}:{evidence.transaction_id}:{evidence.status}"
+
+
+def verify_recorded_awin_transaction_evidence(
+    evidence: AwinTransactionEvidence,
+    *,
+    audit_ledger: AuditRevenueLedger,
+) -> AwinTransactionEvidence:
+    """Require the exact transaction snapshot to exist in a verified audit chain.
+
+    This closes the typed-object trust bypass at settlement: constructing an
+    ``AwinTransactionEvidence`` instance is not authority. This verifier proves only
+    immutable Workflow OS ledger provenance; it does not turn the transaction API into
+    payout authority and it does not replace the separate Awin payout-source gate.
+    """
+    if not isinstance(evidence, AwinTransactionEvidence):
+        raise TypeError("transaction must be AwinTransactionEvidence")
+    if not isinstance(audit_ledger, AuditRevenueLedger):
+        raise TypeError("audit_ledger must be AuditRevenueLedger")
+
+    canonical = normalize_awin_transaction(
+        {
+            "transaction_id": evidence.transaction_id,
+            "publisher_id": evidence.publisher_id,
+            "advertiser_id": evidence.advertiser_id,
+            "status": evidence.status,
+            "commission_eur": str(Decimal(evidence.commission_cents) / Decimal(100)),
+            "currency": evidence.currency,
+            "transaction_at": evidence.transaction_at,
+            "validation_at": evidence.validation_at,
+            "click_ref": evidence.click_ref,
+            "evidence_sha256": evidence.evidence_sha256,
+        },
+        expected_opportunity_id=evidence.opportunity_id,
     )
-    event_id = "awin-transaction:" + hashlib.sha256(event_material.encode("utf-8")).hexdigest()
+    if canonical != evidence:
+        raise ValueError("Awin transaction evidence is not canonical")
+
+    expected_event_id = _transaction_event_id(evidence)
+    expected_payload = _transaction_audit_payload(evidence)
+    for row in audit_ledger.verified_audit_events():
+        if row["event_id"] != expected_event_id:
+            continue
+        if row["event_type"] != "affiliate.awin.transaction_evidence":
+            raise ValueError("Awin transaction audit event type mismatch")
+        if row["subject_id"] != evidence.opportunity_id:
+            raise ValueError("Awin transaction audit subject mismatch")
+        try:
+            recorded_payload = json.loads(row["event_json"])
+        except json.JSONDecodeError as exc:
+            raise ValueError("Awin transaction audit payload is malformed") from exc
+        if recorded_payload != expected_payload:
+            raise ValueError("Awin transaction does not match immutable audit evidence")
+        return evidence
+    raise ValueError("Awin transaction is missing immutable audit evidence")
+
+
+def record_awin_transaction_evidence(
+    raw: Mapping[str, Any],
+    *,
+    expected_opportunity_id: str,
+    opportunity_ledger: OpportunityLedger,
+    audit_ledger: AuditRevenueLedger,
+) -> AwinTransactionEvidence:
+    evidence = normalize_awin_transaction(
+        raw, expected_opportunity_id=expected_opportunity_id
+    )
+    if opportunity_ledger.latest_decision(evidence.opportunity_id) is None:
+        raise ValueError("Awin transaction references an unknown Workflow OS opportunity")
+
+    payload = _transaction_audit_payload(evidence)
+    event_id = _transaction_event_id(evidence)
     occurred_at = evidence.validation_at or evidence.transaction_at
     audit_ledger.append_event(
         event_id,

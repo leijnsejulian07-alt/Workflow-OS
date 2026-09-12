@@ -3,6 +3,7 @@ import unittest
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 from workflow_os.alpaca_paper_equity import build_alpaca_paper_equity_curve
 from workflow_os.alpaca_paper_evidence import record_alpaca_paper_order_outcome_evidence
@@ -99,6 +100,42 @@ class AlpacaPaperFillProvenanceTests(unittest.TestCase):
         self.assertEqual(provenance[0].opening_filled_at, "2026-09-11T10:00:01+00:00")
         self.assertEqual(provenance[0].closing_filled_at, "2026-09-11T10:30:01+00:00")
         self.assertNotEqual(curve.points[0].occurred_at, provenance[0].closing_filled_at)
+
+    def test_provenance_consumes_one_verified_audit_snapshot(self):
+        opening = self._make_outcome(
+            client_order_id="snapshot-open",
+            side="buy",
+            price="100",
+            filled_at="2026-09-11T10:00:01Z",
+        )
+        closing = self._make_outcome(
+            client_order_id="snapshot-close",
+            side="sell",
+            price="110",
+            filled_at="2026-09-11T10:30:01Z",
+        )
+        self._record_outcome(opening, "2026-09-11T12:00:00Z")
+        self._record_outcome(closing, "2026-09-11T12:01:00Z")
+        curve = self._build_curve(
+            opening=opening,
+            closing=closing,
+            position_observed_at="2026-09-11T12:02:00Z",
+        )
+
+        with patch.object(
+            self.audit,
+            "verify_audit_chain",
+            side_effect=AssertionError("provenance must not verify then reopen the ledger"),
+        ):
+            provenance = verify_alpaca_paper_curve_fill_provenance(
+                audit_ledger=self.audit,
+                strategy_policy=self.policy,
+                curve=curve,
+            )
+
+        self.assertEqual(len(provenance), 1)
+        self.assertEqual(provenance[0].opening_filled_at, "2026-09-11T10:00:01+00:00")
+        self.assertEqual(provenance[0].closing_filled_at, "2026-09-11T10:30:01+00:00")
 
     def test_missing_exact_fill_price_provenance_fails_closed(self):
         opening = self._make_outcome(

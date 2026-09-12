@@ -51,10 +51,13 @@ def _credit_cents(value: object) -> int:
 
 
 def normalize_plaid_bank_receipt(raw: Mapping[str, Any]) -> PlaidBankReceiptEvidence:
-    """Convert one official Plaid Transactions record into immutable receipt evidence.
+    """Normalize one posted Plaid Transactions record into hashed receipt evidence.
 
-    This is evidence only. It never grants settlement authority by itself. Pending,
-    non-EUR, outgoing, malformed, or identity-ambiguous transactions fail closed.
+    This snapshot is evidence only and never grants settlement authority by itself.
+    Plaid can later surface posted transactions as modified or removed via
+    ``/transactions/sync``; callers that maintain a live feed must apply those updates
+    before treating the latest snapshot as settlement evidence. Pending, non-EUR,
+    outgoing, malformed, or identity-ambiguous transactions fail closed here.
     """
     if not isinstance(raw, Mapping):
         raise ValueError("raw Plaid transaction must be a mapping")

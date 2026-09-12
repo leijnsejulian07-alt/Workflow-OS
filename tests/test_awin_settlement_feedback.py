@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import tempfile
 import unittest
 from pathlib import Path
@@ -93,6 +94,14 @@ class AwinSettlementFeedbackTests(unittest.TestCase):
             ledger = RevenueReconciliationLedger(Path(tmp) / "reconciliation.sqlite")
             with self.assertRaisesRegex(TypeError, "bank_receipt"):
                 self._reconcile(ledger, bank_receipt="not-evidence")
+            self.assertEqual(ledger.realized_summary("opp-awin-1").sample_count, 0)
+
+    def test_forged_typed_bank_receipt_digest_cannot_enter_cash_truth(self):
+        forged = replace(self._bank_receipt(), evidence_sha256="0" * 64)
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = RevenueReconciliationLedger(Path(tmp) / "reconciliation.sqlite")
+            with self.assertRaisesRegex(ValueError, "digest mismatch"):
+                self._reconcile(ledger, bank_receipt=forged)
             self.assertEqual(ledger.realized_summary("opp-awin-1").sample_count, 0)
 
     def test_non_approved_transaction_cannot_be_promoted_to_cash(self):

@@ -1,4 +1,4 @@
-import pytest
+import unittest
 
 from workflow_os.external_context import (
     ProviderContextHit,
@@ -38,43 +38,46 @@ def ctx(project: str, epoch: int) -> ScopedAccessContext:
     )
 
 
-def test_external_context_is_namespaced_and_epoch_bound():
-    provider = FakeProvider()
-    adapter = ScopedExternalContextAdapter(provider, provider_name="openviking")
-    current = ctx("alpha", 3)
+class ExternalContextTests(unittest.TestCase):
+    def test_external_context_is_namespaced_and_epoch_bound(self):
+        provider = FakeProvider()
+        adapter = ScopedExternalContextAdapter(provider, provider_name="openviking")
+        current = ctx("alpha", 3)
 
-    hit = adapter.search(context=current, query="architecture", limit=4)[0]
+        hit = adapter.search(context=current, query="architecture", limit=4)[0]
 
-    namespace, query, limit = provider.calls[-1]
-    assert namespace == f"captain:{current.scope.digest}:epoch:3"
-    assert "alpha" not in namespace
-    assert query == "architecture"
-    assert limit == 4
-    hit.require_context(current)
+        namespace, query, limit = provider.calls[-1]
+        self.assertEqual(namespace, f"captain:{current.scope.digest}:epoch:3")
+        self.assertNotIn("alpha", namespace)
+        self.assertEqual(query, "architecture")
+        self.assertEqual(limit, 4)
+        hit.require_context(current)
 
-    with pytest.raises(ScopeMismatchError):
-        hit.require_context(ctx("beta", 3))
-    with pytest.raises(ScopeMismatchError):
-        hit.require_context(ctx("alpha", 4))
+        with self.assertRaises(ScopeMismatchError):
+            hit.require_context(ctx("beta", 3))
+        with self.assertRaises(ScopeMismatchError):
+            hit.require_context(ctx("alpha", 4))
+
+    def test_epoch_change_uses_new_provider_namespace(self):
+        provider = FakeProvider()
+        adapter = ScopedExternalContextAdapter(provider, provider_name="openviking")
+
+        adapter.search(context=ctx("alpha", 7), query="one")
+        adapter.search(context=ctx("alpha", 8), query="two")
+
+        self.assertNotEqual(provider.calls[0][0], provider.calls[1][0])
+
+    def test_unscoped_or_malformed_requests_fail_closed(self):
+        provider = FakeProvider()
+        adapter = ScopedExternalContextAdapter(provider, provider_name="openviking")
+
+        with self.assertRaises(ScopeMismatchError):
+            adapter.search(context=None, query="x")
+        with self.assertRaises(ValueError):
+            adapter.search(context=ctx("alpha", 1), query="")
+        with self.assertRaises(ValueError):
+            adapter.search(context=ctx("alpha", 1), query="x", limit=0)
 
 
-def test_epoch_change_uses_new_provider_namespace():
-    provider = FakeProvider()
-    adapter = ScopedExternalContextAdapter(provider, provider_name="openviking")
-
-    adapter.search(context=ctx("alpha", 7), query="one")
-    adapter.search(context=ctx("alpha", 8), query="two")
-
-    assert provider.calls[0][0] != provider.calls[1][0]
-
-
-def test_unscoped_or_malformed_requests_fail_closed():
-    provider = FakeProvider()
-    adapter = ScopedExternalContextAdapter(provider, provider_name="openviking")
-
-    with pytest.raises(ScopeMismatchError):
-        adapter.search(context=None, query="x")
-    with pytest.raises(ValueError):
-        adapter.search(context=ctx("alpha", 1), query="")
-    with pytest.raises(ValueError):
-        adapter.search(context=ctx("alpha", 1), query="x", limit=0)
+if __name__ == "__main__":
+    unittest.main()

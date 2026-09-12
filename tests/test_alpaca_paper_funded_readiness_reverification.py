@@ -32,7 +32,7 @@ class AlpacaPaperFundedReadinessReverificationTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _outcome(self, *, client_order_id: str, side: str, price: str, filled_at: str) -> AlpacaPaperOrderOutcome:
+    def _make_outcome(self, *, client_order_id: str, side: str, price: str, filled_at: str) -> AlpacaPaperOrderOutcome:
         filled = datetime.fromisoformat(filled_at.replace("Z", "+00:00")).astimezone(timezone.utc)
         return AlpacaPaperOrderOutcome(
             external_order_id=f"external-{client_order_id}",
@@ -49,13 +49,13 @@ class AlpacaPaperFundedReadinessReverificationTests(unittest.TestCase):
         )
 
     def _evidence_fixture(self):
-        opening = self._outcome(
+        opening = self._make_outcome(
             client_order_id="open-forge",
             side="buy",
             price="100",
             filled_at="2026-08-10T10:00:00Z",
         )
-        closing = self._outcome(
+        closing = self._make_outcome(
             client_order_id="close-forge",
             side="sell",
             price="110",

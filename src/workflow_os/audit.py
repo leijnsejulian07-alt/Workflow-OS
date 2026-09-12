@@ -201,10 +201,9 @@ class AuditRevenueLedger:
             row = db.execute("SELECT COALESCE(SUM(amount_eur), 0) AS total FROM cash_receipts").fetchone()
         return float(row["total"])
 
-    def verify_audit_chain(self) -> bool:
+    @staticmethod
+    def _audit_chain_is_valid(rows: tuple[sqlite3.Row, ...] | list[sqlite3.Row]) -> bool:
         previous = "GENESIS"
-        with managed_connection(self._connect()) as db:
-            rows = db.execute("SELECT event_id, occurred_at, event_type, subject_id, event_json, previous_hash, event_hash FROM audit_events ORDER BY id ASC").fetchall()
         for row in rows:
             if row["previous_hash"] != previous:
                 return False
@@ -213,4 +212,27 @@ class AuditRevenueLedger:
             if digest != row["event_hash"]:
                 return False
             previous = digest
+        return True
+
+    def verified_audit_events(self) -> tuple[sqlite3.Row, ...]:
+        """Return the exact audit rows whose hash chain was verified in one snapshot.
+
+        The read transaction is opened before fetching the chain and no second query
+        is required by consumers. Returned rows are the materialized values that were
+        themselves hash-verified, closing verify-then-read TOCTOU gaps.
+        """
+        with managed_connection(self._connect()) as db:
+            db.execute("BEGIN")
+            rows = db.execute(
+                "SELECT event_id, occurred_at, event_type, subject_id, event_json, previous_hash, event_hash FROM audit_events ORDER BY id ASC"
+            ).fetchall()
+            if not self._audit_chain_is_valid(rows):
+                raise ValueError("audit chain verification failed")
+            return tuple(rows)
+
+    def verify_audit_chain(self) -> bool:
+        try:
+            self.verified_audit_events()
+        except ValueError:
+            return False
         return True

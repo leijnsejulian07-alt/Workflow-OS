@@ -36,7 +36,7 @@ class AlpacaPaperFundedReadinessTests(unittest.TestCase):
         self.tmpdirs.append(tmp)
         return AuditRevenueLedger(Path(tmp.name) / "audit.db")
 
-    def _outcome(self, *, client_order_id: str, side: str, price: str, filled_at: str) -> AlpacaPaperOrderOutcome:
+    def _make_outcome(self, *, client_order_id: str, side: str, price: str, filled_at: str) -> AlpacaPaperOrderOutcome:
         filled = datetime.fromisoformat(filled_at.replace("Z", "+00:00")).astimezone(timezone.utc)
         return AlpacaPaperOrderOutcome(
             external_order_id=f"external-{client_order_id}",
@@ -82,13 +82,13 @@ class AlpacaPaperFundedReadinessTests(unittest.TestCase):
     ) -> AlpacaPaperValidationWindow:
         policy = policy or self.policy
         audit = self._ledger()
-        opening = self._outcome(
+        opening = self._make_outcome(
             client_order_id=f"open-{suffix}",
             side="buy",
             price=opening_price,
             filled_at=opening_fill,
         )
-        closing = self._outcome(
+        closing = self._make_outcome(
             client_order_id=f"close-{suffix}",
             side="sell",
             price=closing_price,
@@ -354,13 +354,13 @@ class AlpacaPaperFundedReadinessTests(unittest.TestCase):
 
     def test_fabricated_curve_pnl_or_costs_fail_before_readiness(self):
         audit = self._ledger()
-        opening = self._outcome(
+        opening = self._make_outcome(
             client_order_id="open-tamper",
             side="buy",
             price="100",
             filled_at="2026-08-10T10:00:00Z",
         )
-        closing = self._outcome(
+        closing = self._make_outcome(
             client_order_id="close-tamper",
             side="sell",
             price="110",

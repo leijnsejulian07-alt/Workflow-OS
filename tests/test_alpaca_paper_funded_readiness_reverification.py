@@ -114,7 +114,7 @@ class AlpacaPaperFundedReadinessReverificationTests(unittest.TestCase):
             curve=curve,
         )
         forged_provenance = (
-            replace(real_provenance[0], opening_filled_at="2026-08-10T11:00:00+00:00"),
+            replace(real_provenance[0], opening_filled_at="2026-08-10T10:05:00+00:00"),
         )
         forged_window = AlpacaPaperValidationWindow._from_verified_provenance(
             audit_ledger=self.audit,

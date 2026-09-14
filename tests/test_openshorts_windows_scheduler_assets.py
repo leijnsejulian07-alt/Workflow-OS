@@ -10,9 +10,13 @@ INSTALLER = ROOT / "scripts" / "install_openshorts_scheduled_task.ps1"
 
 
 class OpenShortsWindowsSchedulerAssetTests(unittest.TestCase):
-    def test_runner_invokes_only_the_one_shot_runtime_entrypoint(self) -> None:
+    def test_runner_reconciles_terminal_jobs_before_one_shot_dispatch(self) -> None:
         text = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("workflow_os.openshorts_runtime_entrypoint", text)
+        status_module = "workflow_os.openshorts_status_runtime_entrypoint"
+        dispatch_module = "workflow_os.openshorts_runtime_entrypoint"
+        self.assertIn(status_module, text)
+        self.assertIn(dispatch_module, text)
+        self.assertLess(text.index(status_module), text.index(dispatch_module))
         self.assertNotIn("while (", text.lower())
         self.assertNotIn("start-job", text.lower())
         self.assertNotIn("start-process", text.lower())

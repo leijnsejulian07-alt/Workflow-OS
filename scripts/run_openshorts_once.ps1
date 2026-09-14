@@ -21,10 +21,16 @@ try {
     Push-Location $repoRoot
     $pushed = $true
 
+    & $PythonExe -m workflow_os.openshorts_status_runtime_entrypoint
+    $statusExitCode = $LASTEXITCODE
+    if ($statusExitCode -ne 0) {
+        throw "OpenShorts terminal reconciliation exited with code $statusExitCode"
+    }
+
     & $PythonExe -m workflow_os.openshorts_runtime_entrypoint
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) {
-        throw "OpenShorts runtime exited with code $exitCode"
+    $runtimeExitCode = $LASTEXITCODE
+    if ($runtimeExitCode -ne 0) {
+        throw "OpenShorts runtime exited with code $runtimeExitCode"
     }
 }
 finally {

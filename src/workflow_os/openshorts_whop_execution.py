@@ -25,6 +25,36 @@ class OpenShortsWhopExecutionResult:
     provenance: WhopBountySubmissionProvenance | None
 
 
+def _verify_prepared_openshorts_binding(
+    verified_job: VerifiedLeasedOpportunityJob,
+    prepared: PreparedOpenShortsWhopSubmission,
+) -> None:
+    record = verified_job.job
+    if record.job_type == "produce_and_publish":
+        if not prepared.openshorts_idempotency_key.startswith(f"openshorts:{record.job_id}:"):
+            raise RuntimeError("prepared OpenShorts provenance is not bound to this durable job")
+        return
+    if record.job_type != "submit_reward":
+        raise RuntimeError("prepared OpenShorts Whop execution requires an approved durable job type")
+
+    upstream = verified_job.payload.get("upstream_render")
+    if not isinstance(upstream, dict):
+        raise RuntimeError("submit_reward job is missing upstream render provenance")
+    source_job_id = upstream.get("source_job_id")
+    if not isinstance(source_job_id, int) or isinstance(source_job_id, bool) or source_job_id < 1:
+        raise RuntimeError("upstream render source job identity is invalid")
+    if not prepared.openshorts_idempotency_key.startswith(f"openshorts:{source_job_id}:"):
+        raise RuntimeError("prepared OpenShorts provenance is not bound to the upstream render job")
+    if upstream.get("openshorts_idempotency_key") != prepared.openshorts_idempotency_key:
+        raise RuntimeError("prepared OpenShorts idempotency provenance drifted before execution")
+    if upstream.get("provider_job_id") != prepared.openshorts_provider_job_id:
+        raise RuntimeError("prepared OpenShorts provider job provenance drifted before execution")
+    if upstream.get("clip_index") != prepared.openshorts_clip_index:
+        raise RuntimeError("prepared OpenShorts clip provenance drifted before execution")
+    if upstream.get("evidence_sha256") != prepared.openshorts_evidence_sha256:
+        raise RuntimeError("prepared OpenShorts evidence provenance drifted before execution")
+
+
 def execute_prepared_openshorts_whop_submission(
     verified_job: VerifiedLeasedOpportunityJob,
     prepared: PreparedOpenShortsWhopSubmission,
@@ -71,8 +101,7 @@ def execute_prepared_openshorts_whop_submission(
         raise RuntimeError("prepared OpenShorts Whop submission job identity drifted")
     if submission.opportunity_id != record.opportunity_id:
         raise RuntimeError("prepared OpenShorts Whop submission opportunity identity drifted")
-    if not prepared.openshorts_idempotency_key.startswith(f"openshorts:{record.job_id}:"):
-        raise RuntimeError("prepared OpenShorts provenance is not bound to this durable job")
+    _verify_prepared_openshorts_binding(verified_job, prepared)
 
     current = side_effect_ledger.get(submission.reservation.side_effect.idempotency_key)
     if current is None:

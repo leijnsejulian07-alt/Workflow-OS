@@ -58,11 +58,17 @@ def enqueue_completed_openshorts_whop_jobs(
     """
     if not isinstance(openshorts_idempotency_key, str):
         raise TypeError("openshorts_idempotency_key must be a string")
-    match = _OPENSHORTS_KEY_RE.fullmatch(openshorts_idempotency_key.strip())
+    clean_key = openshorts_idempotency_key.strip()
+    match = _OPENSHORTS_KEY_RE.fullmatch(clean_key)
     if match is None:
         raise ValueError("OpenShorts idempotency key is not bound to a durable render job")
     source_job_id = int(match.group(1))
     source_record, source_payload = _source_job_payload(state_db_path, source_job_id)
+    expected_parent_digest = hashlib.sha256(
+        f"openshorts-job\n{source_job_id}\n{source_record.request_fingerprint}".encode("utf-8")
+    ).hexdigest()
+    if match.group(2) != expected_parent_digest:
+        raise RuntimeError("OpenShorts idempotency key does not match the source durable job")
     if not outputs:
         raise ValueError("completed OpenShorts output set must not be empty")
 
@@ -72,7 +78,7 @@ def enqueue_completed_openshorts_whop_jobs(
     for output in outputs:
         if not isinstance(output, OpenShortsClipOutput):
             raise TypeError("outputs must contain OpenShortsClipOutput values")
-        if output.idempotency_key != openshorts_idempotency_key:
+        if output.idempotency_key != clean_key:
             raise RuntimeError("OpenShorts output is not bound to the source render side effect")
         if output.clip_index in seen_indexes:
             raise ValueError("OpenShorts output clip index is duplicated")

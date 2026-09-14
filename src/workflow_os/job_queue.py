@@ -3,7 +3,7 @@ import hashlib, json, sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .sqlite_lifecycle import managed_connection
 
@@ -27,6 +27,17 @@ def _payload(v:Any)->str:
     s=json.dumps(v,sort_keys=True,separators=(",",":"),ensure_ascii=False)
     if len(s.encode())>_MAX_PAYLOAD_BYTES: raise ValueError("job payload exceeds 64 KiB")
     return s
+
+def _job_types(values:Iterable[str]|None)->tuple[str,...]|None:
+    if values is None: return None
+    if isinstance(values,(str,bytes)): raise ValueError("allowed_job_types must be an iterable of job type strings")
+    cleaned=[]
+    for value in values:
+        cleaned.append(_id(value,"job_type",100))
+        if len(cleaned)>64: raise ValueError("allowed_job_types exceeds 64 entries")
+    unique=tuple(sorted(set(cleaned)))
+    if not unique: raise ValueError("allowed_job_types must not be empty")
+    return unique
 
 @dataclass(frozen=True)
 class JobRecord:
@@ -69,13 +80,17 @@ class JobQueue:
                 return self._row(row)
             db.execute("INSERT INTO jobs(idempotency_key,opportunity_id,job_type,request_json,request_fingerprint,state,max_attempts,available_at) VALUES(?,?,?,?,?,'READY',?,?)",(key,op,kind,p,fp,max_attempts,available))
             return self._row(db.execute("SELECT * FROM jobs WHERE idempotency_key=?",(key,)).fetchone())
-    def claim(self,*,worker_id:object,now:object,lease_seconds:int=300)->JobRecord|None:
-        worker=_id(worker_id,"worker_id",200); now_s=_ts(now,"now")
+    def claim(self,*,worker_id:object,now:object,lease_seconds:int=300,allowed_job_types:Iterable[str]|None=None)->JobRecord|None:
+        worker=_id(worker_id,"worker_id",200); now_s=_ts(now,"now"); allowed=_job_types(allowed_job_types)
         if not isinstance(lease_seconds,int) or isinstance(lease_seconds,bool) or not 30<=lease_seconds<=3600: raise ValueError("lease_seconds must be between 30 and 3600")
         until=(datetime.fromisoformat(now_s)+timedelta(seconds=lease_seconds)).isoformat()
         with managed_connection(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
-            row=db.execute("SELECT * FROM jobs WHERE state IN ('READY','FAILED_RETRYABLE') AND available_at<=? AND attempt_count<max_attempts ORDER BY available_at,job_id LIMIT 1",(now_s,)).fetchone()
+            if allowed is None:
+                row=db.execute("SELECT * FROM jobs WHERE state IN ('READY','FAILED_RETRYABLE') AND available_at<=? AND attempt_count<max_attempts ORDER BY available_at,job_id LIMIT 1",(now_s,)).fetchone()
+            else:
+                placeholders=",".join("?" for _ in allowed)
+                row=db.execute(f"SELECT * FROM jobs WHERE state IN ('READY','FAILED_RETRYABLE') AND available_at<=? AND attempt_count<max_attempts AND job_type IN ({placeholders}) ORDER BY available_at,job_id LIMIT 1",(now_s,*allowed)).fetchone()
             if not row: return None
             db.execute("UPDATE jobs SET state='LEASED',attempt_count=attempt_count+1,worker_id=?,lease_expires_at=?,last_error=NULL,updated_at=CURRENT_TIMESTAMP WHERE job_id=?",(worker,until,row['job_id']))
             return self._row(db.execute("SELECT * FROM jobs WHERE job_id=?",(row['job_id'],)).fetchone())

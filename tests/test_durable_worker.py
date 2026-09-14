@@ -51,9 +51,9 @@ class DurableWorkerTests(unittest.TestCase):
             },
         }
 
-    def _enqueue(self, *, job_type="produce_and_publish", payload=None, max_attempts=3):
+    def _enqueue(self, *, job_type="produce_and_publish", payload=None, max_attempts=3, key="revenue:test:1"):
         return self.queue.enqueue(
-            idempotency_key="revenue:test:1",
+            idempotency_key=key,
             opportunity_id="op-1",
             job_type=job_type,
             payload=self._payload() if payload is None else payload,
@@ -109,15 +109,32 @@ class DurableWorkerTests(unittest.TestCase):
             )
         self.assertEqual(self._state(job.job_id)[0], "DEAD")
 
-    def test_unsupported_job_type_fails_before_execution(self):
-        job = self._enqueue(job_type="unknown_side_effect")
-        with self.assertRaises(RuntimeError):
+    def test_unsupported_job_type_is_not_leased_or_mutated(self):
+        job = self._enqueue(job_type="submit_reward")
+        self.assertIsNone(
             claim_verified_opportunity_job(
                 self.queue,
-                worker_id="worker-1",
+                worker_id="render-worker",
                 now="2026-08-22T18:00:01+00:00",
             )
-        self.assertEqual(self._state(job.job_id)[0], "FAILED_RETRYABLE")
+        )
+        state, attempts, error = self._state(job.job_id)
+        self.assertEqual(state, "READY")
+        self.assertEqual(attempts, 0)
+        self.assertIsNone(error)
+
+    def test_specialized_worker_skips_other_type_and_claims_compatible_job(self):
+        skipped = self._enqueue(job_type="submit_reward", key="revenue:test:submit")
+        expected = self._enqueue(job_type="produce_and_publish", key="revenue:test:render")
+        verified = claim_verified_opportunity_job(
+            self.queue,
+            worker_id="render-worker",
+            now="2026-08-22T18:00:01+00:00",
+        )
+        self.assertIsNotNone(verified)
+        self.assertEqual(expected.job_id, verified.job.job_id)
+        self.assertEqual("READY", self._state(skipped.job_id)[0])
+        self.assertEqual(0, self._state(skipped.job_id)[1])
 
     def test_mutated_persisted_payload_is_caught_by_queue_fingerprint(self):
         job = self._enqueue()

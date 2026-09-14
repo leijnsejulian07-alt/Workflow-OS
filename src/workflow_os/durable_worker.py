@@ -13,7 +13,6 @@ _DEFAULT_ALLOWED_JOB_TYPES = frozenset({"produce_and_publish"})
 @dataclass(frozen=True)
 class VerifiedLeasedOpportunityJob:
     """A live leased job whose persisted payload and opportunity snapshot were verified."""
-
     job: JobRecord
     payload: dict[str, Any]
     opportunity: dict[str, Any]
@@ -41,18 +40,22 @@ def claim_verified_opportunity_job(
     lease_seconds: int = 300,
     allowed_job_types: Iterable[str] = _DEFAULT_ALLOWED_JOB_TYPES,
 ) -> VerifiedLeasedOpportunityJob | None:
-    """Claim one durable job and verify all restart-critical identity before execution.
+    """Claim one compatible durable job and verify restart-critical identity.
 
-    Validation happens before any production/publication side effect. A malformed or
-    drifted payload is therefore explicitly marked retry-safe in the durable queue;
-    bounded attempts will eventually DEAD-letter persistent corruption rather than
-    letting an expired lease become an ambiguous external-effect state.
+    Job-type filtering happens atomically inside the queue claim so a specialized
+    worker cannot lease and poison another worker's job. Validation then happens
+    before any production/publication side effect; malformed compatible jobs are
+    marked retry-safe and eventually DEAD-lettered after bounded attempts.
     """
-
     if not isinstance(queue, JobQueue):
         raise TypeError("queue must be JobQueue")
     allowed = _allowed_types(allowed_job_types)
-    job = queue.claim(worker_id=worker_id, now=now, lease_seconds=lease_seconds)
+    job = queue.claim(
+        worker_id=worker_id,
+        now=now,
+        lease_seconds=lease_seconds,
+        allowed_job_types=allowed,
+    )
     if job is None:
         return None
 
@@ -93,9 +96,6 @@ def claim_verified_opportunity_job(
 
         return VerifiedLeasedOpportunityJob(job=job, payload=payload, opportunity=opportunity)
     except Exception as exc:
-        # Nothing external has been attempted yet. Persist that fact instead of
-        # allowing the lease to expire into UNKNOWN. Repeated corruption is bounded
-        # by the queue's max_attempts and then becomes DEAD.
         try:
             queue.fail(
                 job.job_id,

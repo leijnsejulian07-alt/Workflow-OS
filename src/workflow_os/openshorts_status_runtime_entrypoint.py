@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .adapters.openshorts_hosted import OpenShortsHostedTransport
-from .openshorts_execution import (
-    OpenShortsExecutionEvidenceStore,
-    reconcile_terminal_status,
+from .openshorts_execution import OpenShortsExecutionEvidenceStore, observe_terminal_status
+from .openshorts_output_provenance import (
+    OpenShortsOutputProvenanceStore,
+    record_completed_status_clip_outputs,
 )
 from .openshorts_runtime_entrypoint import load_openshorts_runtime_config
 from .side_effects import SideEffectLedger
@@ -20,6 +21,7 @@ class OpenShortsTerminalReconciliationCycleResult:
     checked: int
     terminal: int
     pending: int
+    outputs_recorded: int = 0
 
 
 def _candidate_idempotency_keys(path: str | Path, *, limit: int) -> tuple[str, ...]:
@@ -57,38 +59,50 @@ def run_bounded_openshorts_terminal_reconciliation(
     max_checks: int = 1,
     transport: OpenShortsHostedTransport | None = None,
 ) -> OpenShortsTerminalReconciliationCycleResult:
-    """Poll at most four confirmed OpenShorts jobs and persist terminal evidence.
+    """Poll at most four confirmed jobs and persist terminal/output evidence.
 
-    Only already-SUCCEEDED OpenShorts dispatches without terminal evidence are read.
-    A non-terminal provider status is left unchanged for a later scheduler cycle.
-    Provider/protocol failures propagate so the host scheduler can retry on its next
-    bounded invocation instead of converting an ambiguous response into success.
+    Completed status payloads are converted to immutable clip provenance before
+    terminal evidence is committed. This ordering keeps a crash retryable: if
+    provenance persistence fails, the dispatch remains a reconciliation candidate;
+    if provenance succeeds and the process crashes before terminal evidence, its
+    immutable replay is safe on the next bounded cycle.
     """
     runtime_transport = transport or OpenShortsHostedTransport()
     db_path = str(state_db_path)
     ledger = SideEffectLedger(db_path)
     evidence_store = OpenShortsExecutionEvidenceStore(db_path)
+    output_store = OpenShortsOutputProvenanceStore(db_path)
     keys = _candidate_idempotency_keys(db_path, limit=max_checks)
 
     terminal = 0
     pending = 0
+    outputs_recorded = 0
     for key in keys:
-        evidence = reconcile_terminal_status(
+        observation = observe_terminal_status(
             ledger=ledger,
-            evidence_store=evidence_store,
             idempotency_key=key,
             transport=runtime_transport,
             api_key=api_key,
         )
-        if evidence is None:
+        if observation is None:
             pending += 1
-        else:
-            terminal += 1
+            continue
+        if observation.evidence.terminal_state == "COMPLETED":
+            outputs = record_completed_status_clip_outputs(
+                ledger=ledger,
+                store=output_store,
+                terminal_evidence=observation.evidence,
+                status_payload=observation.payload,
+            )
+            outputs_recorded += len(outputs)
+        evidence_store.record(observation.evidence)
+        terminal += 1
 
     return OpenShortsTerminalReconciliationCycleResult(
         checked=len(keys),
         terminal=terminal,
         pending=pending,
+        outputs_recorded=outputs_recorded,
     )
 
 
@@ -103,6 +117,7 @@ def main() -> int:
         "checked": result.checked,
         "terminal": result.terminal,
         "pending": result.pending,
+        "outputs_recorded": result.outputs_recorded,
     }, sort_keys=True))
     return 0
 

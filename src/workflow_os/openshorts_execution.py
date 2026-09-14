@@ -184,20 +184,14 @@ def record_terminal_webhook(
     ))
 
 
-def reconcile_terminal_status_observation(
+def observe_terminal_status(
     *,
     ledger: SideEffectLedger,
-    evidence_store: OpenShortsExecutionEvidenceStore,
     idempotency_key: str,
     transport: OpenShortsHostedTransport,
     api_key: str,
 ) -> OpenShortsTerminalStatusObservation | None:
-    """Persist terminal status evidence while retaining the exact authenticated payload.
-
-    The caller can consume provider output from this observation without a second
-    network request. The canonical payload hash is the immutable binding between
-    the returned payload and durable terminal evidence.
-    """
+    """Return a hash-bound authenticated terminal payload without persisting it yet."""
     record = ledger.get(idempotency_key)
     if record is None or record.state != "SUCCEEDED" or not record.external_reference:
         raise RuntimeError("status reconciliation requires a confirmed provider job binding")
@@ -211,14 +205,34 @@ def reconcile_terminal_status_observation(
     if status not in {"completed", "failed"}:
         raise OpenShortsHostedTransportError("OpenShorts returned an unknown job status")
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    evidence = evidence_store.record(OpenShortsTerminalEvidence(
+    evidence = OpenShortsTerminalEvidence(
         idempotency_key=idempotency_key,
         provider_job_id=record.external_reference,
         terminal_state=status.upper(),
         evidence_sha256=hashlib.sha256(canonical).hexdigest(),
         source="status_api",
-    ))
+    )
     return OpenShortsTerminalStatusObservation(evidence=evidence, payload=payload)
+
+
+def reconcile_terminal_status_observation(
+    *,
+    ledger: SideEffectLedger,
+    evidence_store: OpenShortsExecutionEvidenceStore,
+    idempotency_key: str,
+    transport: OpenShortsHostedTransport,
+    api_key: str,
+) -> OpenShortsTerminalStatusObservation | None:
+    observation = observe_terminal_status(
+        ledger=ledger,
+        idempotency_key=idempotency_key,
+        transport=transport,
+        api_key=api_key,
+    )
+    if observation is None:
+        return None
+    recorded = evidence_store.record(observation.evidence)
+    return OpenShortsTerminalStatusObservation(evidence=recorded, payload=observation.payload)
 
 
 def reconcile_terminal_status(

@@ -18,6 +18,7 @@ from .side_effects import SideEffectLedger
 
 _BOUNTY_ID_RE = re.compile(r"^bnty_[A-Za-z0-9_-]{3,200}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_ALLOWED_WHOP_JOB_TYPES = frozenset({"produce_and_publish", "submit_reward"})
 
 
 @dataclass(frozen=True)
@@ -36,8 +37,8 @@ def _verified_whop_job(job: VerifiedLeasedOpportunityJob) -> tuple[str, str]:
     record = job.job
     opportunity = job.opportunity
 
-    if record.job_type != "produce_and_publish":
-        raise RuntimeError("Whop preparation requires a produce_and_publish job")
+    if record.job_type not in _ALLOWED_WHOP_JOB_TYPES:
+        raise RuntimeError("Whop preparation requires an approved Whop execution job type")
     if opportunity.get("opportunity_id") != record.opportunity_id:
         raise RuntimeError("verified opportunity identity does not match durable job")
     if opportunity.get("source_platform") != "whop_bounties":

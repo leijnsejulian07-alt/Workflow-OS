@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import ipaddress
+import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 from urllib.parse import urlparse
 
 from .adapters.openshorts_hosted import OpenShortsWebhookEvent
@@ -14,6 +17,7 @@ from .sqlite_lifecycle import managed_connection
 _MAX_CLIPS = 16
 _MAX_URL_CHARS = 4096
 _MAX_TITLE_CHARS = 500
+_HOSTED_API_BASE = "https://api.openshorts.app"
 
 
 @dataclass(frozen=True)
@@ -28,7 +32,7 @@ class OpenShortsClipOutput:
 
 
 class OpenShortsOutputProvenanceStore:
-    """Immutable public clip outputs bound to signed terminal evidence."""
+    """Immutable public clip outputs bound to authenticated terminal evidence."""
 
     def __init__(self, path: str | Path):
         self.path = str(path)
@@ -137,6 +141,69 @@ def _public_https(value: object, *, name: str) -> str:
     return url
 
 
+def _hosted_status_url(value: object, *, name: str) -> str:
+    if isinstance(value, str) and value.startswith("/") and not value.startswith("//"):
+        value = f"{_HOSTED_API_BASE}{value}"
+    return _public_https(value, name=name)
+
+
+def _confirmed_dispatch(ledger: SideEffectLedger, terminal_evidence: OpenShortsTerminalEvidence) -> None:
+    record = ledger.get(terminal_evidence.idempotency_key)
+    if (
+        record is None
+        or record.state != "SUCCEEDED"
+        or record.action != "openshorts.process"
+        or record.external_reference != terminal_evidence.provider_job_id
+    ):
+        raise RuntimeError("clip outputs are not bound to a confirmed OpenShorts dispatch")
+
+
+def _outputs_from_clips(
+    *,
+    terminal_evidence: OpenShortsTerminalEvidence,
+    clips: object,
+    implicit_indexes: bool,
+    hosted_status_urls: bool,
+) -> tuple[OpenShortsClipOutput, ...]:
+    if not isinstance(clips, list) or not clips or len(clips) > _MAX_CLIPS:
+        raise ValueError("completed OpenShorts evidence has an invalid clip count")
+    outputs: list[OpenShortsClipOutput] = []
+    seen_indexes: set[int] = set()
+    seen_urls: set[str] = set()
+    for fallback_index, clip in enumerate(clips):
+        if not isinstance(clip, Mapping):
+            raise ValueError("completed OpenShorts evidence contains malformed clip data")
+        index = clip.get("index", fallback_index if implicit_indexes else None)
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0 or index in seen_indexes:
+            raise ValueError("OpenShorts clip index is invalid or duplicated")
+        url_parser = _hosted_status_url if hosted_status_urls else _public_https
+        video_url = url_parser(clip.get("video_url"), name="video_url")
+        raw_download_url = clip.get("download_url")
+        if raw_download_url is None and hosted_status_urls:
+            raw_download_url = clip.get("video_url")
+        download_url = url_parser(raw_download_url, name="download_url")
+        if video_url in seen_urls or download_url in seen_urls:
+            raise ValueError("OpenShorts clip URLs must be unique")
+        title = clip.get("title")
+        if title is None:
+            title = clip.get("video_title_for_youtube_short") or ""
+        if not isinstance(title, str) or len(title.strip()) > _MAX_TITLE_CHARS:
+            raise ValueError("OpenShorts clip title is invalid")
+        seen_indexes.add(index)
+        seen_urls.update((video_url, download_url))
+        outputs.append(OpenShortsClipOutput(
+            idempotency_key=terminal_evidence.idempotency_key,
+            provider_job_id=terminal_evidence.provider_job_id,
+            clip_index=index,
+            video_url=video_url,
+            download_url=download_url,
+            title=title.strip(),
+            evidence_sha256=terminal_evidence.evidence_sha256,
+        ))
+    outputs.sort(key=lambda item: item.clip_index)
+    return tuple(outputs)
+
+
 def record_completed_clip_outputs(
     *,
     ledger: SideEffectLedger,
@@ -144,7 +211,7 @@ def record_completed_clip_outputs(
     terminal_evidence: OpenShortsTerminalEvidence,
     webhook_event: OpenShortsWebhookEvent,
 ) -> tuple[OpenShortsClipOutput, ...]:
-    """Persist only signed completed clip URLs matching durable dispatch + terminal evidence."""
+    """Persist signed completed webhook clip URLs matching durable dispatch evidence."""
     if terminal_evidence.terminal_state != "COMPLETED" or terminal_evidence.source != "webhook":
         raise RuntimeError("clip outputs require completed signed webhook terminal evidence")
     if webhook_event.event != "job.completed":
@@ -153,41 +220,43 @@ def record_completed_clip_outputs(
         raise RuntimeError("webhook body does not match durable terminal evidence")
     if webhook_event.job_id != terminal_evidence.provider_job_id:
         raise RuntimeError("webhook job does not match durable terminal evidence")
-    record = ledger.get(terminal_evidence.idempotency_key)
-    if record is None or record.state != "SUCCEEDED" or record.external_reference != webhook_event.job_id:
-        raise RuntimeError("clip outputs are not bound to a confirmed OpenShorts dispatch")
+    _confirmed_dispatch(ledger, terminal_evidence)
+    outputs = _outputs_from_clips(
+        terminal_evidence=terminal_evidence,
+        clips=webhook_event.payload.get("clips"),
+        implicit_indexes=False,
+        hosted_status_urls=False,
+    )
+    return store.record_many(outputs)
 
-    clips = webhook_event.payload.get("clips")
-    if not isinstance(clips, list) or not clips or len(clips) > _MAX_CLIPS:
-        raise ValueError("completed OpenShorts webhook has an invalid clip count")
-    outputs: list[OpenShortsClipOutput] = []
-    seen_indexes: set[int] = set()
-    seen_urls: set[str] = set()
-    for clip in clips:
-        if not isinstance(clip, dict):
-            raise ValueError("completed OpenShorts webhook contains malformed clip data")
-        index = clip.get("index")
-        if not isinstance(index, int) or isinstance(index, bool) or index < 0 or index in seen_indexes:
-            raise ValueError("OpenShorts clip index is invalid or duplicated")
-        video_url = _public_https(clip.get("video_url"), name="video_url")
-        download_url = _public_https(clip.get("download_url"), name="download_url")
-        if video_url in seen_urls or download_url in seen_urls:
-            raise ValueError("OpenShorts clip URLs must be unique")
-        title = clip.get("title")
-        if title is None:
-            title = ""
-        if not isinstance(title, str) or len(title.strip()) > _MAX_TITLE_CHARS:
-            raise ValueError("OpenShorts clip title is invalid")
-        seen_indexes.add(index)
-        seen_urls.update((video_url, download_url))
-        outputs.append(OpenShortsClipOutput(
-            idempotency_key=terminal_evidence.idempotency_key,
-            provider_job_id=webhook_event.job_id,
-            clip_index=index,
-            video_url=video_url,
-            download_url=download_url,
-            title=title.strip(),
-            evidence_sha256=terminal_evidence.evidence_sha256,
-        ))
-    outputs.sort(key=lambda item: item.clip_index)
-    return store.record_many(tuple(outputs))
+
+def record_completed_status_clip_outputs(
+    *,
+    ledger: SideEffectLedger,
+    store: OpenShortsOutputProvenanceStore,
+    terminal_evidence: OpenShortsTerminalEvidence,
+    status_payload: Mapping[str, object],
+) -> tuple[OpenShortsClipOutput, ...]:
+    """Persist clips from the exact authenticated status payload bound by evidence hash."""
+    if terminal_evidence.terminal_state != "COMPLETED" or terminal_evidence.source != "status_api":
+        raise RuntimeError("status clip outputs require completed status-api terminal evidence")
+    payload = dict(status_payload)
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    if hashlib.sha256(canonical).hexdigest() != terminal_evidence.evidence_sha256:
+        raise RuntimeError("status payload does not match durable terminal evidence")
+    payload_job_id = payload.get("job_id")
+    if payload_job_id is not None and str(payload_job_id).strip() != terminal_evidence.provider_job_id:
+        raise RuntimeError("status job does not match durable terminal evidence")
+    if str(payload.get("status") or "").strip().lower() != "completed":
+        raise RuntimeError("status clip outputs require a completed provider status")
+    _confirmed_dispatch(ledger, terminal_evidence)
+    result = payload.get("result")
+    if not isinstance(result, Mapping):
+        raise ValueError("completed OpenShorts status omitted result data")
+    outputs = _outputs_from_clips(
+        terminal_evidence=terminal_evidence,
+        clips=result.get("clips"),
+        implicit_indexes=True,
+        hosted_status_urls=True,
+    )
+    return store.record_many(outputs)

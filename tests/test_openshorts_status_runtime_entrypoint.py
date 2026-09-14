@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from workflow_os.openshorts_execution import OpenShortsExecutionEvidenceStore
+from workflow_os.openshorts_output_provenance import OpenShortsOutputProvenanceStore
 from workflow_os.openshorts_status_runtime_entrypoint import (
     run_bounded_openshorts_terminal_reconciliation,
 )
@@ -20,7 +21,16 @@ class _FakeTransport:
         if api_key != "osk_test_status_runtime":
             raise AssertionError("unexpected API key")
         self.calls.append(job_id)
-        return {"job_id": job_id, "status": self.statuses[job_id]}
+        status = self.statuses[job_id]
+        payload = {"job_id": job_id, "status": status}
+        if status == "completed":
+            payload["result"] = {
+                "clips": [{
+                    "title": f"Clip for {job_id}",
+                    "video_url": f"/api/files/{job_id}/clip-0.mp4",
+                }]
+            }
+        return payload
 
 
 class OpenShortsStatusRuntimeEntrypointTests(unittest.TestCase):
@@ -43,7 +53,7 @@ class OpenShortsStatusRuntimeEntrypointTests(unittest.TestCase):
         self.ledger.begin_attempt(key)
         self.ledger.mark_succeeded(key, external_reference=job_id)
 
-    def test_completed_provider_job_becomes_terminal_evidence(self) -> None:
+    def test_completed_provider_job_records_terminal_and_clip_provenance(self) -> None:
         self._confirmed_dispatch("render:1", "job-1")
         transport = _FakeTransport({"job-1": "completed"})
 
@@ -54,7 +64,10 @@ class OpenShortsStatusRuntimeEntrypointTests(unittest.TestCase):
             transport=transport,
         )
 
-        self.assertEqual((result.checked, result.terminal, result.pending), (1, 1, 0))
+        self.assertEqual(
+            (result.checked, result.terminal, result.pending, result.outputs_recorded),
+            (1, 1, 0, 1),
+        )
         self.assertEqual(transport.calls, ["job-1"])
         evidence = OpenShortsExecutionEvidenceStore(self.db_path).get("render:1")
         self.assertIsNotNone(evidence)
@@ -62,6 +75,13 @@ class OpenShortsStatusRuntimeEntrypointTests(unittest.TestCase):
         self.assertEqual(evidence.provider_job_id, "job-1")
         self.assertEqual(evidence.terminal_state, "COMPLETED")
         self.assertEqual(evidence.source, "status_api")
+        outputs = OpenShortsOutputProvenanceStore(self.db_path).list_for("render:1")
+        self.assertEqual(len(outputs), 1)
+        self.assertEqual(outputs[0].clip_index, 0)
+        self.assertEqual(outputs[0].provider_job_id, "job-1")
+        self.assertEqual(outputs[0].video_url, "https://api.openshorts.app/api/files/job-1/clip-0.mp4")
+        self.assertEqual(outputs[0].download_url, outputs[0].video_url)
+        self.assertEqual(outputs[0].evidence_sha256, evidence.evidence_sha256)
 
     def test_nonterminal_provider_job_is_left_for_later_cycle(self) -> None:
         self._confirmed_dispatch("render:pending", "job-pending")
@@ -75,7 +95,27 @@ class OpenShortsStatusRuntimeEntrypointTests(unittest.TestCase):
         )
 
         self.assertEqual((result.checked, result.terminal, result.pending), (1, 0, 1))
+        self.assertEqual(result.outputs_recorded, 0)
         self.assertIsNone(OpenShortsExecutionEvidenceStore(self.db_path).get("render:pending"))
+        self.assertEqual(OpenShortsOutputProvenanceStore(self.db_path).list_for("render:pending"), ())
+
+    def test_failed_provider_job_records_no_clip_output(self) -> None:
+        self._confirmed_dispatch("render:failed", "job-failed")
+        transport = _FakeTransport({"job-failed": "failed"})
+
+        result = run_bounded_openshorts_terminal_reconciliation(
+            state_db_path=self.db_path,
+            api_key="osk_test_status_runtime",
+            max_checks=1,
+            transport=transport,
+        )
+
+        self.assertEqual((result.checked, result.terminal, result.pending, result.outputs_recorded), (1, 1, 0, 0))
+        evidence = OpenShortsExecutionEvidenceStore(self.db_path).get("render:failed")
+        self.assertIsNotNone(evidence)
+        assert evidence is not None
+        self.assertEqual(evidence.terminal_state, "FAILED")
+        self.assertEqual(OpenShortsOutputProvenanceStore(self.db_path).list_for("render:failed"), ())
 
     def test_cycle_is_bounded_and_skips_already_reconciled_jobs(self) -> None:
         self._confirmed_dispatch("render:a", "job-a")
@@ -97,8 +137,30 @@ class OpenShortsStatusRuntimeEntrypointTests(unittest.TestCase):
         )
 
         self.assertEqual((first.checked, first.terminal, first.pending), (2, 2, 0))
+        self.assertEqual(first.outputs_recorded, 1)
         self.assertEqual((second.checked, second.terminal, second.pending), (1, 1, 0))
+        self.assertEqual(second.outputs_recorded, 1)
         self.assertEqual(transport.calls, ["job-a", "job-b", "job-c"])
+
+    def test_malformed_completed_output_fails_before_terminal_evidence_commit(self) -> None:
+        self._confirmed_dispatch("render:bad", "job-bad")
+
+        class _BadTransport(_FakeTransport):
+            def get_status(self, *, api_key: str, job_id: str):
+                payload = super().get_status(api_key=api_key, job_id=job_id)
+                payload["result"] = {"clips": [{"video_url": "http://unsafe.example/clip.mp4"}]}
+                return payload
+
+        transport = _BadTransport({"job-bad": "completed"})
+        with self.assertRaises(ValueError):
+            run_bounded_openshorts_terminal_reconciliation(
+                state_db_path=self.db_path,
+                api_key="osk_test_status_runtime",
+                max_checks=1,
+                transport=transport,
+            )
+        self.assertIsNone(OpenShortsExecutionEvidenceStore(self.db_path).get("render:bad"))
+        self.assertEqual(OpenShortsOutputProvenanceStore(self.db_path).list_for("render:bad"), ())
 
     def test_invalid_cycle_bound_fails_before_provider_calls(self) -> None:
         transport = _FakeTransport({})

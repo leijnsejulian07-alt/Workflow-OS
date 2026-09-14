@@ -5,6 +5,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 from .adapters.openshorts_hosted import (
     OpenShortsHostedTransport,
@@ -30,6 +31,12 @@ class OpenShortsTerminalEvidence:
     terminal_state: str
     evidence_sha256: str
     source: str
+
+
+@dataclass(frozen=True)
+class OpenShortsTerminalStatusObservation:
+    evidence: OpenShortsTerminalEvidence
+    payload: Mapping[str, object]
 
 
 class OpenShortsExecutionEvidenceStore:
@@ -177,18 +184,18 @@ def record_terminal_webhook(
     ))
 
 
-def reconcile_terminal_status(
+def observe_terminal_status(
     *,
     ledger: SideEffectLedger,
-    evidence_store: OpenShortsExecutionEvidenceStore,
     idempotency_key: str,
     transport: OpenShortsHostedTransport,
     api_key: str,
-) -> OpenShortsTerminalEvidence | None:
+) -> OpenShortsTerminalStatusObservation | None:
+    """Return a hash-bound authenticated terminal payload without persisting it yet."""
     record = ledger.get(idempotency_key)
     if record is None or record.state != "SUCCEEDED" or not record.external_reference:
         raise RuntimeError("status reconciliation requires a confirmed provider job binding")
-    payload = transport.get_status(api_key=api_key, job_id=record.external_reference)
+    payload = dict(transport.get_status(api_key=api_key, job_id=record.external_reference))
     payload_job_id = payload.get("job_id")
     if payload_job_id is not None and str(payload_job_id).strip() != record.external_reference:
         raise OpenShortsHostedTransportError("OpenShorts status job id does not match durable binding")
@@ -197,11 +204,50 @@ def reconcile_terminal_status(
         return None
     if status not in {"completed", "failed"}:
         raise OpenShortsHostedTransportError("OpenShorts returned an unknown job status")
-    canonical = json.dumps(dict(payload), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    return evidence_store.record(OpenShortsTerminalEvidence(
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    evidence = OpenShortsTerminalEvidence(
         idempotency_key=idempotency_key,
         provider_job_id=record.external_reference,
         terminal_state=status.upper(),
         evidence_sha256=hashlib.sha256(canonical).hexdigest(),
         source="status_api",
-    ))
+    )
+    return OpenShortsTerminalStatusObservation(evidence=evidence, payload=payload)
+
+
+def reconcile_terminal_status_observation(
+    *,
+    ledger: SideEffectLedger,
+    evidence_store: OpenShortsExecutionEvidenceStore,
+    idempotency_key: str,
+    transport: OpenShortsHostedTransport,
+    api_key: str,
+) -> OpenShortsTerminalStatusObservation | None:
+    observation = observe_terminal_status(
+        ledger=ledger,
+        idempotency_key=idempotency_key,
+        transport=transport,
+        api_key=api_key,
+    )
+    if observation is None:
+        return None
+    recorded = evidence_store.record(observation.evidence)
+    return OpenShortsTerminalStatusObservation(evidence=recorded, payload=observation.payload)
+
+
+def reconcile_terminal_status(
+    *,
+    ledger: SideEffectLedger,
+    evidence_store: OpenShortsExecutionEvidenceStore,
+    idempotency_key: str,
+    transport: OpenShortsHostedTransport,
+    api_key: str,
+) -> OpenShortsTerminalEvidence | None:
+    observation = reconcile_terminal_status_observation(
+        ledger=ledger,
+        evidence_store=evidence_store,
+        idempotency_key=idempotency_key,
+        transport=transport,
+        api_key=api_key,
+    )
+    return observation.evidence if observation is not None else None

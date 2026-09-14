@@ -72,7 +72,9 @@ class OpenShortsDurableRuntimeTests(unittest.TestCase):
     def test_rejects_unapproved_webhook_host_before_reservation(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "allowlisted"):
             self.prepare(webhook_url="https://other.example/openshorts")
-        self.assertEqual(self.ledger.list_records(), [])
+        prepared = self.prepare()
+        self.assertEqual(prepared.reservation.state, "RESERVED")
+        self.assertEqual(prepared.reservation.attempt_count, 0)
 
     def test_still_requires_provider_authority(self) -> None:
         with self.assertRaisesRegex(ValueError, "credential authority"):

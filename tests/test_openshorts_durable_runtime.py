@@ -67,10 +67,7 @@ class OpenShortsDurableRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "HTTPS"):
             self.prepare(_verified_job(source_assets=["http://youtu.be/abc"]))
         with self.assertRaisesRegex(RuntimeError, "IP literal"):
-            self.prepare(
-                _verified_job(source_assets=["https://127.0.0.1/video"]),
-                allowed_source_hosts=["127.0.0.1"],
-            )
+            self.prepare(_verified_job(source_assets=["https://127.0.0.1/video"]))
 
     def test_rejects_unapproved_webhook_host_before_reservation(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "allowlisted"):

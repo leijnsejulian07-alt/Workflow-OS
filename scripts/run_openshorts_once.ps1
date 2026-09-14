@@ -1,0 +1,35 @@
+param(
+    [string]$PythonExe = "python.exe"
+)
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$srcPath = Join-Path $repoRoot "src"
+$previousPythonPath = $env:PYTHONPATH
+$pushed = $false
+
+try {
+    if ([string]::IsNullOrWhiteSpace($previousPythonPath)) {
+        $env:PYTHONPATH = $srcPath
+    }
+    else {
+        $env:PYTHONPATH = "$srcPath;$previousPythonPath"
+    }
+
+    Push-Location $repoRoot
+    $pushed = $true
+
+    & $PythonExe -m workflow_os.openshorts_runtime_entrypoint
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        throw "OpenShorts runtime exited with code $exitCode"
+    }
+}
+finally {
+    if ($pushed) {
+        Pop-Location
+    }
+    $env:PYTHONPATH = $previousPythonPath
+}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .adapters.openshorts_hosted import OpenShortsHostedTransport
@@ -12,6 +13,7 @@ from .openshorts_output_provenance import (
     record_completed_status_clip_outputs,
 )
 from .openshorts_runtime_entrypoint import load_openshorts_runtime_config
+from .openshorts_whop_enqueue import enqueue_completed_openshorts_whop_jobs
 from .side_effects import SideEffectLedger
 from .sqlite_lifecycle import managed_connection
 
@@ -22,6 +24,7 @@ class OpenShortsTerminalReconciliationCycleResult:
     terminal: int
     pending: int
     outputs_recorded: int = 0
+    submission_jobs_enqueued: int = 0
 
 
 def _candidate_idempotency_keys(path: str | Path, *, limit: int) -> tuple[str, ...]:
@@ -58,14 +61,15 @@ def run_bounded_openshorts_terminal_reconciliation(
     api_key: str,
     max_checks: int = 1,
     transport: OpenShortsHostedTransport | None = None,
+    available_at: object | None = None,
 ) -> OpenShortsTerminalReconciliationCycleResult:
     """Poll at most four confirmed jobs and persist terminal/output evidence.
 
-    Completed status payloads are converted to immutable clip provenance before
-    terminal evidence is committed. This ordering keeps a crash retryable: if
-    provenance persistence fails, the dispatch remains a reconciliation candidate;
-    if provenance succeeds and the process crashes before terminal evidence, its
-    immutable replay is safe on the next bounded cycle.
+    Completed status payloads are converted to immutable clip provenance and,
+    for canonical durable render keys, separate `submit_reward` jobs before
+    terminal evidence is committed. This ordering keeps crashes replayable: both
+    provenance recording and queue enqueue are idempotent, so the next bounded
+    cycle can safely repeat them before sealing terminal evidence.
     """
     runtime_transport = transport or OpenShortsHostedTransport()
     db_path = str(state_db_path)
@@ -73,10 +77,12 @@ def run_bounded_openshorts_terminal_reconciliation(
     evidence_store = OpenShortsExecutionEvidenceStore(db_path)
     output_store = OpenShortsOutputProvenanceStore(db_path)
     keys = _candidate_idempotency_keys(db_path, limit=max_checks)
+    child_available_at = available_at or datetime.now(timezone.utc).isoformat()
 
     terminal = 0
     pending = 0
     outputs_recorded = 0
+    submission_jobs_enqueued = 0
     for key in keys:
         observation = observe_terminal_status(
             ledger=ledger,
@@ -95,6 +101,14 @@ def run_bounded_openshorts_terminal_reconciliation(
                 status_payload=observation.payload,
             )
             outputs_recorded += len(outputs)
+            if key.startswith("openshorts:"):
+                child_jobs = enqueue_completed_openshorts_whop_jobs(
+                    state_db_path=db_path,
+                    openshorts_idempotency_key=key,
+                    outputs=outputs,
+                    available_at=child_available_at,
+                )
+                submission_jobs_enqueued += len(child_jobs)
         evidence_store.record(observation.evidence)
         terminal += 1
 
@@ -103,6 +117,7 @@ def run_bounded_openshorts_terminal_reconciliation(
         terminal=terminal,
         pending=pending,
         outputs_recorded=outputs_recorded,
+        submission_jobs_enqueued=submission_jobs_enqueued,
     )
 
 
@@ -118,6 +133,7 @@ def main() -> int:
         "terminal": result.terminal,
         "pending": result.pending,
         "outputs_recorded": result.outputs_recorded,
+        "submission_jobs_enqueued": result.submission_jobs_enqueued,
     }, sort_keys=True))
     return 0
 

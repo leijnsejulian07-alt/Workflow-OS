@@ -11,6 +11,9 @@ from .side_effects import SideEffectLedger
 from .sqlite_lifecycle import managed_connection
 
 
+_ALLOWED_WHOP_JOB_TYPES = frozenset({"produce_and_publish", "submit_reward"})
+
+
 @dataclass(frozen=True)
 class DurableWhopBountyBinding:
     job_id: int
@@ -66,8 +69,8 @@ class DurableWhopBountyBindingLedger:
 
         job = verified_job.job
         opportunity = verified_job.opportunity
-        if job.job_type != "produce_and_publish":
-            raise RuntimeError("Whop bounty binding requires a produce_and_publish job")
+        if job.job_type not in _ALLOWED_WHOP_JOB_TYPES:
+            raise RuntimeError("Whop bounty binding requires an approved Whop execution job type")
         if opportunity.get("opportunity_id") != job.opportunity_id:
             raise RuntimeError("verified opportunity identity does not match durable job")
         if opportunity.get("source_platform") != "whop_bounties":

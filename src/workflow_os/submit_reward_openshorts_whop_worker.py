@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from .adapters.whop_bounty_http_transport import WhopBountyHttpTransport
 from .credentials import CredentialProvider, CredentialRef
@@ -69,6 +69,7 @@ def run_submit_reward_openshorts_whop_once(
     expected_duration_ms: int | None = None,
     require_audio: bool = False,
     caption: str = "",
+    qc_verifier: Callable[..., OpenShortsOutputQCEvidence] = verify_openshorts_output_technical_qc,
 ) -> SubmitRewardWorkerResult:
     """Execute at most one durable OpenShorts-derived Whop reward submission.
 
@@ -82,6 +83,8 @@ def run_submit_reward_openshorts_whop_once(
         raise ValueError("Whop credential authority is not verified")
     if not isinstance(credential_ref, CredentialRef) or credential_ref.platform != "whop" or credential_ref.secret_name != "user_token":
         raise ValueError("worker requires an account-scoped Whop user_token reference")
+    if not callable(qc_verifier):
+        raise TypeError("qc_verifier must be callable")
 
     verified = claim_verified_opportunity_job(
         queue,
@@ -95,7 +98,7 @@ def run_submit_reward_openshorts_whop_once(
 
     try:
         output = _bound_output(verified, output_store)
-        qc: OpenShortsOutputQCEvidence = verify_openshorts_output_technical_qc(
+        qc = qc_verifier(
             output,
             store=output_store,
             workspace_root=workspace_root,
@@ -106,6 +109,8 @@ def run_submit_reward_openshorts_whop_once(
             expected_duration_ms=expected_duration_ms,
             require_audio=require_audio,
         )
+        if not isinstance(qc, OpenShortsOutputQCEvidence):
+            raise TypeError("qc_verifier must return OpenShortsOutputQCEvidence")
         rights_verified, campaign_verified, disclosure_satisfied = _authority(verified)
         handoff = prepare_submit_reward_openshorts_whop_deliverable(
             verified_job=verified,

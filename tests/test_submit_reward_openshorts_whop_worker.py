@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -84,6 +85,16 @@ class SubmitRewardOpenShortsWhopWorkerTests(unittest.TestCase):
 
     def tearDown(self): self.tmp.cleanup()
 
+    def _job(self, job_id):
+        with sqlite3.connect(self.db) as db:
+            row = db.execute(
+                "SELECT state, attempt_count FROM jobs WHERE job_id=?",
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            raise AssertionError(f"missing durable job {job_id}")
+        return row
+
     def _enqueue(self, *, disclosure=True, job_type="submit_reward"):
         opportunity = dict(self.opportunity)
         opportunity["disclosure_satisfied"] = disclosure
@@ -158,33 +169,33 @@ class SubmitRewardOpenShortsWhopWorkerTests(unittest.TestCase):
         self.assertEqual(result.execution.execution.side_effect.state, "SUCCEEDED")
         self.assertEqual(result.execution.prepared.openshorts_provider_job_id, "provider-worker-1")
         self.assertEqual(len(opener.requests), 1)
-        self.assertEqual(self.queue.get(child.job_id).state, "SUCCEEDED")
+        self.assertEqual(self._job(child.job_id)[0], "SUCCEEDED")
 
     def test_skips_incompatible_job_without_consuming_attempt(self):
         other = self._enqueue(job_type="produce_and_publish")
         result = self._run(_Opener())
         self.assertFalse(result.attempted)
-        current = self.queue.get(other.job_id)
-        self.assertEqual(current.state, "READY")
-        self.assertEqual(current.attempt_count, 0)
+        state, attempt_count = self._job(other.job_id)
+        self.assertEqual(state, "READY")
+        self.assertEqual(attempt_count, 0)
 
     def test_missing_disclosure_fails_before_whop_io_and_requeues(self):
         child = self._enqueue(disclosure=False)
         opener = _Opener()
         with self.assertRaises(ValueError):
             self._run(opener)
-        current = self.queue.get(child.job_id)
-        self.assertEqual(current.state, "READY")
-        self.assertEqual(current.attempt_count, 1)
+        state, attempt_count = self._job(child.job_id)
+        self.assertEqual(state, "FAILED_RETRYABLE")
+        self.assertEqual(attempt_count, 1)
         self.assertEqual(opener.requests, [])
 
     def test_missing_runtime_credential_authority_claims_nothing(self):
         child = self._enqueue()
         with self.assertRaises(ValueError):
             self._run(_Opener(), credential_authority_verified=False)
-        current = self.queue.get(child.job_id)
-        self.assertEqual(current.state, "READY")
-        self.assertEqual(current.attempt_count, 0)
+        state, attempt_count = self._job(child.job_id)
+        self.assertEqual(state, "READY")
+        self.assertEqual(attempt_count, 0)
 
 
 if __name__ == "__main__":

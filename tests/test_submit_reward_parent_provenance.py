@@ -88,6 +88,7 @@ class SubmitRewardParentProvenanceTests(unittest.TestCase):
             ledger=self.ledger,
         )
         self.assertEqual(result.submission.job_id, 88)
+        self.assertEqual(result.openshorts_source_job_id, 41)
         self.assertEqual(result.openshorts_provider_job_id, "job_123")
         self.assertEqual(result.submission.reservation.side_effect.state, "RESERVED")
 

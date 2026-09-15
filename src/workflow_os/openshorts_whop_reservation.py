@@ -19,6 +19,7 @@ class PreparedOpenShortsWhopSubmission:
     """Whop reservation bound to one verified OpenShorts output provenance record."""
 
     submission: PreparedDurableWhopBountySubmission
+    openshorts_source_job_id: int
     openshorts_idempotency_key: str
     openshorts_provider_job_id: str
     openshorts_clip_index: int
@@ -28,12 +29,12 @@ class PreparedOpenShortsWhopSubmission:
 def _verify_render_parent(
     verified_job: VerifiedLeasedOpportunityJob,
     handoff: PreparedOpenShortsWhopDeliverable,
-) -> None:
+) -> int:
     record = verified_job.job
     if record.job_type == "produce_and_publish":
         if not handoff.openshorts_idempotency_key.startswith(f"openshorts:{record.job_id}:"):
             raise RuntimeError("OpenShorts handoff is not bound to this durable render job")
-        return
+        return record.job_id
     if record.job_type != "submit_reward":
         raise RuntimeError("OpenShorts Whop reservation requires an approved durable job type")
 
@@ -58,6 +59,7 @@ def _verify_render_parent(
         raise RuntimeError("OpenShorts evidence provenance drifted")
     if upstream.get("video_url") not in handoff.deliverable.urls:
         raise RuntimeError("Whop deliverable URL is not the verified upstream render output")
+    return source_job_id
 
 
 def reserve_verified_openshorts_whop_submission(
@@ -86,7 +88,7 @@ def reserve_verified_openshorts_whop_submission(
         raise RuntimeError("OpenShorts handoff opportunity identity drifted")
     if not _SHA256_RE.fullmatch(handoff.evidence_sha256):
         raise RuntimeError("OpenShorts handoff evidence digest is malformed")
-    _verify_render_parent(verified_job, handoff)
+    source_job_id = _verify_render_parent(verified_job, handoff)
     if not handoff.provider_job_id.strip():
         raise RuntimeError("OpenShorts provider job identity is missing")
     if handoff.clip_index < 0:
@@ -107,6 +109,7 @@ def reserve_verified_openshorts_whop_submission(
 
     return PreparedOpenShortsWhopSubmission(
         submission=submission,
+        openshorts_source_job_id=source_job_id,
         openshorts_idempotency_key=handoff.openshorts_idempotency_key,
         openshorts_provider_job_id=handoff.provider_job_id,
         openshorts_clip_index=handoff.clip_index,

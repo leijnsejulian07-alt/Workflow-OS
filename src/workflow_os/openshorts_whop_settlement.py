@@ -65,8 +65,11 @@ def reconcile_prepared_openshorts_whop_payout_and_decide_next_action(
         raise RuntimeError("Whop payout side effect is not the OpenShorts-derived reservation")
     if provenance.side_effect_request_fingerprint != reserved_effect.request_fingerprint:
         raise RuntimeError("Whop payout side-effect fingerprint drifted from OpenShorts reservation")
-    if not prepared.openshorts_idempotency_key.startswith(f"openshorts:{submission.job_id}:"):
-        raise RuntimeError("OpenShorts provenance is no longer bound to the durable job")
+    source_job_id = prepared.openshorts_source_job_id
+    if not isinstance(source_job_id, int) or isinstance(source_job_id, bool) or source_job_id < 1:
+        raise RuntimeError("OpenShorts source job identity is invalid before settlement")
+    if not prepared.openshorts_idempotency_key.startswith(f"openshorts:{source_job_id}:"):
+        raise RuntimeError("OpenShorts provenance is no longer bound to its durable render job")
 
     settlement = reconcile_whop_bounty_payout_and_decide_next_action(
         audit_ledger=audit_ledger,

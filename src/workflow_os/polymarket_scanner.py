@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
@@ -30,9 +31,18 @@ FairProbabilityEstimator = Callable[[GammaMarket], FairProbabilityEvidence | Non
 
 
 def _valid_evidence(evidence: FairProbabilityEvidence | None, *, now_utc: datetime) -> bool:
-    if evidence is None or not evidence.source.strip():
+    # Estimators are an external-input boundary. Never let malformed model/provider
+    # output crash the whole scanner or reach the CLOB path.
+    if not isinstance(evidence, FairProbabilityEvidence):
         return False
-    if not 0.0 < evidence.probability < 1.0:
+    if not isinstance(evidence.source, str) or not evidence.source.strip():
+        return False
+    probability = evidence.probability
+    if isinstance(probability, bool) or not isinstance(probability, (int, float)):
+        return False
+    if not math.isfinite(float(probability)) or not 0.0 < float(probability) < 1.0:
+        return False
+    if not isinstance(evidence.observed_at, datetime):
         return False
     if evidence.observed_at.tzinfo is None or evidence.observed_at.utcoffset() is None:
         return False

@@ -15,6 +15,7 @@ class GammaMarket:
     market_id: str
     question: str
     yes_price: float
+    yes_token_id: str
     liquidity_usd: float
     resolves_at: datetime
     resolution_source: str
@@ -38,7 +39,7 @@ def _json_list(value: Any) -> list[Any]:
 
 
 def normalize_gamma_market(raw: dict[str, Any]) -> GammaMarket:
-    """Normalize only fields documented by Polymarket Gamma; malformed input fails closed."""
+    """Normalize documented Gamma fields; malformed or ambiguous input fails closed."""
     market_id = str(raw.get("id", "")).strip()
     question = str(raw.get("question", "")).strip()
     source = str(raw.get("resolutionSource", "")).strip()
@@ -47,11 +48,16 @@ def normalize_gamma_market(raw: dict[str, Any]) -> GammaMarket:
 
     outcomes = _json_list(raw.get("outcomes"))
     prices = _json_list(raw.get("outcomePrices"))
-    if len(outcomes) != len(prices) or "Yes" not in outcomes:
-        raise ValueError("binary YES price unavailable")
-    yes_price = float(prices[outcomes.index("Yes")])
+    token_ids = _json_list(raw.get("clobTokenIds"))
+    if len(outcomes) != len(prices) or len(outcomes) != len(token_ids) or "Yes" not in outcomes:
+        raise ValueError("aligned binary YES contract unavailable")
+    yes_index = outcomes.index("Yes")
+    yes_price = float(prices[yes_index])
+    yes_token_id = str(token_ids[yes_index]).strip()
     if not 0.0 < yes_price < 1.0:
         raise ValueError("invalid YES price")
+    if not yes_token_id:
+        raise ValueError("missing YES CLOB token id")
 
     liquidity_raw = raw.get("liquidityNum", raw.get("liquidity"))
     liquidity = float(liquidity_raw)
@@ -69,6 +75,7 @@ def normalize_gamma_market(raw: dict[str, Any]) -> GammaMarket:
         market_id=market_id,
         question=question,
         yes_price=yes_price,
+        yes_token_id=yes_token_id,
         liquidity_usd=liquidity,
         resolves_at=resolves_at,
         resolution_source=source,

@@ -54,6 +54,33 @@ def test_future_dated_evidence_fails_closed(fetch_markets):
     assert result[0].decision.reason == "MISSING_FAIR_VALUE_EVIDENCE"
 
 
+@patch("workflow_os.polymarket_scanner.fetch_gamma_markets", return_value=[MARKET])
+def test_malformed_evidence_fails_closed_without_clob(fetch_markets):
+    malformed = FairProbabilityEvidence(float("nan"), "model:bad", "not-a-datetime")  # type: ignore[arg-type]
+    with patch("workflow_os.polymarket_scanner.fetch_book") as fetch_book:
+        result = scan_paper_markets(
+            estimator=lambda _: malformed,
+            bankroll_usd=50.0,
+            open_positions=0,
+            now_utc=NOW,
+        )
+    assert result[0].decision.reason == "MISSING_FAIR_VALUE_EVIDENCE"
+    fetch_book.assert_not_called()
+
+
+@patch("workflow_os.polymarket_scanner.fetch_gamma_markets", return_value=[MARKET])
+def test_non_evidence_estimator_output_fails_closed_without_clob(fetch_markets):
+    with patch("workflow_os.polymarket_scanner.fetch_book") as fetch_book:
+        result = scan_paper_markets(
+            estimator=lambda _: {"probability": 0.74},  # type: ignore[return-value]
+            bankroll_usd=50.0,
+            open_positions=0,
+            now_utc=NOW,
+        )
+    assert result[0].decision.reason == "MISSING_FAIR_VALUE_EVIDENCE"
+    fetch_book.assert_not_called()
+
+
 @patch("workflow_os.polymarket_scanner.fetch_book", side_effect=RuntimeError("unavailable"))
 @patch("workflow_os.polymarket_scanner.fetch_gamma_markets", return_value=[MARKET])
 def test_clob_failure_fails_closed(fetch_markets, fetch_book):

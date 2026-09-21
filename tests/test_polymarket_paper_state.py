@@ -28,11 +28,13 @@ class PolymarketPaperStoreTests(unittest.TestCase):
         self.assertAlmostEqual(restarted.account().peak_bankroll_usd, 50.6)
         self.assertEqual(restarted.open_count(), 0)
 
-    def test_duplicate_market_fails_closed(self):
+    def test_duplicate_market_fails_closed_without_second_debit(self):
         store = PolymarketPaperStore(self.path)
         store.open_yes(market_id='m1', stake_usd=1, entry_price=.5, entry_fair_probability=.7)
-        with self.assertRaises(Exception):
+        with self.assertRaises(ValueError):
             store.open_yes(market_id='m1', stake_usd=1, entry_price=.5, entry_fair_probability=.7)
+        self.assertEqual(store.open_count(), 1)
+        self.assertEqual(store.account().bankroll_usd, 49)
 
     def test_stopped_account_cannot_open(self):
         store = PolymarketPaperStore(self.path)

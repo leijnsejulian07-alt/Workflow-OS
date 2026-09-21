@@ -39,7 +39,7 @@ def test_scanner_reaches_guide_signal(fetch_markets, fetch_book):
 def test_missing_evidence_fails_closed_without_clob(fetch_markets):
     with patch("workflow_os.polymarket_scanner.fetch_book") as fetch_book:
         result = scan_paper_markets(estimator=lambda _: None, bankroll_usd=50.0, open_positions=0, now_utc=NOW)
-    assert result[0].decision.reason == "MISSING_FAIR_VALUE_EVIDENCE"
+    assert result[0].decision.reason == "MISSING_OR_STALE_FAIR_VALUE_EVIDENCE"
     fetch_book.assert_not_called()
 
 
@@ -51,7 +51,20 @@ def test_future_dated_evidence_fails_closed(fetch_markets):
         open_positions=0,
         now_utc=NOW,
     )
-    assert result[0].decision.reason == "MISSING_FAIR_VALUE_EVIDENCE"
+    assert result[0].decision.reason == "MISSING_OR_STALE_FAIR_VALUE_EVIDENCE"
+
+
+@patch("workflow_os.polymarket_scanner.fetch_gamma_markets", return_value=[MARKET])
+def test_stale_evidence_fails_closed_without_clob(fetch_markets):
+    with patch("workflow_os.polymarket_scanner.fetch_book") as fetch_book:
+        result = scan_paper_markets(
+            estimator=lambda _: FairProbabilityEvidence(0.74, "stale", NOW - timedelta(minutes=16)),
+            bankroll_usd=50.0,
+            open_positions=0,
+            now_utc=NOW,
+        )
+    assert result[0].decision.reason == "MISSING_OR_STALE_FAIR_VALUE_EVIDENCE"
+    fetch_book.assert_not_called()
 
 
 @patch("workflow_os.polymarket_scanner.fetch_gamma_markets", return_value=[MARKET])
@@ -64,7 +77,7 @@ def test_malformed_evidence_fails_closed_without_clob(fetch_markets):
             open_positions=0,
             now_utc=NOW,
         )
-    assert result[0].decision.reason == "MISSING_FAIR_VALUE_EVIDENCE"
+    assert result[0].decision.reason == "MISSING_OR_STALE_FAIR_VALUE_EVIDENCE"
     fetch_book.assert_not_called()
 
 
@@ -77,7 +90,7 @@ def test_non_evidence_estimator_output_fails_closed_without_clob(fetch_markets):
             open_positions=0,
             now_utc=NOW,
         )
-    assert result[0].decision.reason == "MISSING_FAIR_VALUE_EVIDENCE"
+    assert result[0].decision.reason == "MISSING_OR_STALE_FAIR_VALUE_EVIDENCE"
     fetch_book.assert_not_called()
 
 

@@ -71,16 +71,21 @@ class PolymarketPaperStore:
         if stake_usd <= 0 or not (0 < entry_price < 1) or not (0 < entry_fair_probability < 1):
             raise ValueError('invalid paper position')
         at = (opened_at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
-        with self._connect() as db:
-            account = db.execute("SELECT bankroll_usd,stopped FROM paper_account WHERE singleton=1").fetchone()
-            if account['stopped']:
-                raise RuntimeError('paper account stopped')
-            if stake_usd > account['bankroll_usd']:
-                raise ValueError('stake exceeds bankroll')
-            db.execute("INSERT INTO paper_positions(market_id,side,stake_usd,entry_price,entry_fair_probability,opened_at) VALUES(?,?,?,?,?,?)",
-                       (market_id, 'YES', stake_usd, entry_price, entry_fair_probability, at))
-            db.execute("UPDATE paper_account SET bankroll_usd=bankroll_usd-? WHERE singleton=1", (stake_usd,))
-            self._insert_event(db, market_id, 'OPEN', {'stake_usd': stake_usd, 'entry_price': entry_price, 'entry_fair_probability': entry_fair_probability})
+        try:
+            with self._connect() as db:
+                account = db.execute("SELECT bankroll_usd,stopped FROM paper_account WHERE singleton=1").fetchone()
+                if account['stopped']:
+                    raise RuntimeError('paper account stopped')
+                if stake_usd > account['bankroll_usd']:
+                    raise ValueError('stake exceeds bankroll')
+                db.execute("INSERT INTO paper_positions(market_id,side,stake_usd,entry_price,entry_fair_probability,opened_at) VALUES(?,?,?,?,?,?)",
+                           (market_id, 'YES', stake_usd, entry_price, entry_fair_probability, at))
+                db.execute("UPDATE paper_account SET bankroll_usd=bankroll_usd-? WHERE singleton=1", (stake_usd,))
+                self._insert_event(db, market_id, 'OPEN', {'stake_usd': stake_usd, 'entry_price': entry_price, 'entry_fair_probability': entry_fair_probability})
+        except sqlite3.IntegrityError as exc:
+            # Duplicate market IDs are expected under retries/races. Keep the storage
+            # implementation detail behind the store boundary so callers can fail closed.
+            raise ValueError('paper position already exists or violates ledger constraints') from exc
 
     def close_yes(self, *, market_id: str, exit_price: float) -> float:
         if not 0 <= exit_price <= 1:

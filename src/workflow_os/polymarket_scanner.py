@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from .polymarket_clob import estimate_buy_slippage, fetch_book
@@ -28,9 +28,15 @@ class PaperScanResult:
 
 
 FairProbabilityEstimator = Callable[[GammaMarket], FairProbabilityEvidence | None]
+DEFAULT_MAX_EVIDENCE_AGE = timedelta(minutes=15)
 
 
-def _valid_evidence(evidence: FairProbabilityEvidence | None, *, now_utc: datetime) -> bool:
+def _valid_evidence(
+    evidence: FairProbabilityEvidence | None,
+    *,
+    now_utc: datetime,
+    max_age: timedelta = DEFAULT_MAX_EVIDENCE_AGE,
+) -> bool:
     # Estimators are an external-input boundary. Never let malformed model/provider
     # output crash the whole scanner or reach the CLOB path.
     if not isinstance(evidence, FairProbabilityEvidence):
@@ -46,11 +52,14 @@ def _valid_evidence(evidence: FairProbabilityEvidence | None, *, now_utc: dateti
         return False
     if evidence.observed_at.tzinfo is None or evidence.observed_at.utcoffset() is None:
         return False
-    return evidence.observed_at.astimezone(timezone.utc) <= now_utc
+    if not isinstance(max_age, timedelta) or max_age <= timedelta(0):
+        return False
+    observed = evidence.observed_at.astimezone(timezone.utc)
+    return now_utc - max_age <= observed <= now_utc
 
 
-def scan_paper_markets(*, estimator: FairProbabilityEstimator, bankroll_usd: float, open_positions: int, policy: PolymarketPaperPolicy = PolymarketPaperPolicy(), now_utc: datetime | None = None, market_limit: int = 100) -> list[PaperScanResult]:
-    """Read-only Gamma -> evidence -> CLOB -> guide gate scanner."""
+def scan_paper_markets(*, estimator: FairProbabilityEstimator, bankroll_usd: float, open_positions: int, policy: PolymarketPaperPolicy = PolymarketPaperPolicy(), now_utc: datetime | None = None, market_limit: int = 100, max_evidence_age: timedelta = DEFAULT_MAX_EVIDENCE_AGE) -> list[PaperScanResult]:
+    """Read-only Gamma -> fresh evidence -> CLOB -> guide gate scanner."""
     now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if now_utc is not None and (now_utc.tzinfo is None or now_utc.utcoffset() is None):
         raise ValueError("now_utc must be timezone-aware")
@@ -61,8 +70,8 @@ def scan_paper_markets(*, estimator: FairProbabilityEstimator, bankroll_usd: flo
             evidence = estimator(market)
         except Exception:
             evidence = None
-        if not _valid_evidence(evidence, now_utc=now):
-            results.append(PaperScanResult(market.market_id, market.question, PolymarketPaperDecision("HOLD", "MISSING_FAIR_VALUE_EVIDENCE")))
+        if not _valid_evidence(evidence, now_utc=now, max_age=max_evidence_age):
+            results.append(PaperScanResult(market.market_id, market.question, PolymarketPaperDecision("HOLD", "MISSING_OR_STALE_FAIR_VALUE_EVIDENCE")))
             continue
         max_stake = bankroll_usd * policy.maximum_bankroll_fraction
         try:

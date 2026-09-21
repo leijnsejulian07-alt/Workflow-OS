@@ -64,7 +64,8 @@ class PolymarketPaperStore:
             return int(db.execute("SELECT COUNT(*) FROM paper_positions WHERE status='OPEN'").fetchone()[0])
 
     def record_decision(self, market_id: str, decision: PolymarketPaperDecision) -> None:
-        self._event(market_id, 'DECISION', asdict(decision))
+        with self._connect() as db:
+            self._insert_event(db, market_id, 'DECISION', asdict(decision))
 
     def open_yes(self, *, market_id: str, stake_usd: float, entry_price: float, entry_fair_probability: float, opened_at: datetime | None = None) -> None:
         if stake_usd <= 0 or not (0 < entry_price < 1) or not (0 < entry_fair_probability < 1):
@@ -79,7 +80,7 @@ class PolymarketPaperStore:
             db.execute("INSERT INTO paper_positions(market_id,side,stake_usd,entry_price,entry_fair_probability,opened_at) VALUES(?,?,?,?,?,?)",
                        (market_id, 'YES', stake_usd, entry_price, entry_fair_probability, at))
             db.execute("UPDATE paper_account SET bankroll_usd=bankroll_usd-? WHERE singleton=1", (stake_usd,))
-        self._event(market_id, 'OPEN', {'stake_usd': stake_usd, 'entry_price': entry_price, 'entry_fair_probability': entry_fair_probability})
+            self._insert_event(db, market_id, 'OPEN', {'stake_usd': stake_usd, 'entry_price': entry_price, 'entry_fair_probability': entry_fair_probability})
 
     def close_yes(self, *, market_id: str, exit_price: float) -> float:
         if not 0 <= exit_price <= 1:
@@ -95,15 +96,15 @@ class PolymarketPaperStore:
             current = db.execute("SELECT bankroll_usd,peak_bankroll_usd FROM paper_account WHERE singleton=1").fetchone()
             if current['bankroll_usd'] > current['peak_bankroll_usd']:
                 db.execute("UPDATE paper_account SET peak_bankroll_usd=? WHERE singleton=1", (current['bankroll_usd'],))
-        self._event(market_id, 'CLOSE', {'exit_price': exit_price, 'pnl_usd': pnl})
+            self._insert_event(db, market_id, 'CLOSE', {'exit_price': exit_price, 'pnl_usd': pnl})
         return pnl
 
     def stop(self, reason: str) -> None:
         with self._connect() as db:
             db.execute("UPDATE paper_account SET stopped=1, stop_reason=? WHERE singleton=1", (reason,))
-        self._event(None, 'STOP', {'reason': reason})
+            self._insert_event(db, None, 'STOP', {'reason': reason})
 
-    def _event(self, market_id: str | None, event_type: str, payload: dict) -> None:
-        with self._connect() as db:
-            db.execute("INSERT INTO paper_events(occurred_at,market_id,event_type,payload_json) VALUES(?,?,?,?)",
-                       (datetime.now(timezone.utc).isoformat(), market_id, event_type, json.dumps(payload, sort_keys=True)))
+    @staticmethod
+    def _insert_event(db: sqlite3.Connection, market_id: str | None, event_type: str, payload: dict) -> None:
+        db.execute("INSERT INTO paper_events(occurred_at,market_id,event_type,payload_json) VALUES(?,?,?,?)",
+                   (datetime.now(timezone.utc).isoformat(), market_id, event_type, json.dumps(payload, sort_keys=True)))

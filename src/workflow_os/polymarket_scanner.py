@@ -25,6 +25,7 @@ class PaperScanResult:
     evidence_source: str = ""
     market_price: float | None = None
     fair_probability: float | None = None
+    yes_token_id: str | None = None
 
 
 FairProbabilityEstimator = Callable[[GammaMarket], FairProbabilityEvidence | None]
@@ -71,16 +72,16 @@ def scan_paper_markets(*, estimator: FairProbabilityEstimator, bankroll_usd: flo
         except Exception:
             evidence = None
         if not _valid_evidence(evidence, now_utc=now, max_age=max_evidence_age):
-            results.append(PaperScanResult(market.market_id, market.question, PolymarketPaperDecision("HOLD", "MISSING_OR_STALE_FAIR_VALUE_EVIDENCE")))
+            results.append(PaperScanResult(market.market_id, market.question, PolymarketPaperDecision("HOLD", "MISSING_OR_STALE_FAIR_VALUE_EVIDENCE"), yes_token_id=market.yes_token_id))
             continue
         max_stake = bankroll_usd * policy.maximum_bankroll_fraction
         try:
             book = fetch_book(market.yes_token_id)
             slippage = estimate_buy_slippage(book, stake_usd=max_stake)
         except (OSError, RuntimeError, TypeError, ValueError):
-            results.append(PaperScanResult(market.market_id, market.question, PolymarketPaperDecision("HOLD", "CLOB_DATA_UNAVAILABLE"), evidence.source))
+            results.append(PaperScanResult(market.market_id, market.question, PolymarketPaperDecision("HOLD", "CLOB_DATA_UNAVAILABLE"), evidence.source, yes_token_id=market.yes_token_id))
             continue
         candidate = PolymarketCandidate(market.market_id, market.yes_price, evidence.probability, market.liquidity_usd, market.resolves_at, market.resolution_source_present, slippage)
         decision = evaluate_candidate(candidate=candidate, bankroll_usd=bankroll_usd, open_positions=open_positions, policy=policy, now_utc=now)
-        results.append(PaperScanResult(market.market_id, market.question, decision, evidence.source, market.yes_price, evidence.probability))
+        results.append(PaperScanResult(market.market_id, market.question, decision, evidence.source, market.yes_price, evidence.probability, market.yes_token_id))
     return results

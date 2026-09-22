@@ -54,6 +54,18 @@ class PolymarketPaperTests(unittest.TestCase):
         self.assertEqual(should_exit(entry_fair_probability=.74, current_fair_probability=.68, hours_to_resolution=4, mispricing_closed=False).reason, "FAIR_VALUE_CHANGED")
         self.assertEqual(should_exit(entry_fair_probability=.74, current_fair_probability=.74, hours_to_resolution=1, mispricing_closed=False).reason, "RESOLUTION_WINDOW")
 
+    def test_malformed_exit_monitoring_input_reduces_exposure(self):
+        cases = (
+            dict(entry_fair_probability=float("nan"), current_fair_probability=.74, hours_to_resolution=4, mispricing_closed=False),
+            dict(entry_fair_probability=.74, current_fair_probability=1.2, hours_to_resolution=4, mispricing_closed=False),
+            dict(entry_fair_probability=.74, current_fair_probability=.74, hours_to_resolution=float("nan"), mispricing_closed=False),
+            dict(entry_fair_probability=.74, current_fair_probability=.74, hours_to_resolution=4, mispricing_closed="false"),
+        )
+        for values in cases:
+            with self.subTest(values=values):
+                result = should_exit(**values)
+                self.assertEqual((result.action, result.reason), ("PAPER_EXIT", "INVALID_EXIT_INPUT"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -22,6 +23,13 @@ class PolymarketPaperStore:
     """Small durable paper ledger. It never holds credentials or reaches live execution."""
 
     def __init__(self, path: str | Path, *, starting_bankroll_usd: float = 50.0):
+        if (
+            not isinstance(starting_bankroll_usd, (int, float))
+            or isinstance(starting_bankroll_usd, bool)
+            or not math.isfinite(float(starting_bankroll_usd))
+            or float(starting_bankroll_usd) <= 0
+        ):
+            raise ValueError('starting_bankroll_usd must be a positive finite number')
         self.path = str(path)
         self.starting_bankroll_usd = float(starting_bankroll_usd)
         self._init()
@@ -68,6 +76,11 @@ class PolymarketPaperStore:
             self._insert_event(db, market_id, 'DECISION', asdict(decision))
 
     def open_yes(self, *, market_id: str, stake_usd: float, entry_price: float, entry_fair_probability: float, opened_at: datetime | None = None) -> None:
+        if not isinstance(market_id, str) or not market_id or market_id != market_id.strip():
+            raise ValueError('invalid market id')
+        numeric_values = (stake_usd, entry_price, entry_fair_probability)
+        if any(not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value)) for value in numeric_values):
+            raise ValueError('paper position values must be finite numbers')
         if stake_usd <= 0 or not (0 < entry_price < 1) or not (0 < entry_fair_probability < 1):
             raise ValueError('invalid paper position')
         at = (opened_at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
@@ -88,7 +101,12 @@ class PolymarketPaperStore:
             raise ValueError('paper position already exists or violates ledger constraints') from exc
 
     def close_yes(self, *, market_id: str, exit_price: float) -> float:
-        if not 0 <= exit_price <= 1:
+        if (
+            not isinstance(exit_price, (int, float))
+            or isinstance(exit_price, bool)
+            or not math.isfinite(float(exit_price))
+            or not 0 <= exit_price <= 1
+        ):
             raise ValueError('invalid exit price')
         with self._connect() as db:
             row = db.execute("SELECT * FROM paper_positions WHERE market_id=? AND status='OPEN'", (market_id,)).fetchone()

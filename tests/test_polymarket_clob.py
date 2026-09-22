@@ -1,6 +1,6 @@
 import pytest
 
-from workflow_os.polymarket_clob import estimate_buy_slippage, normalize_book
+from workflow_os.polymarket_clob import estimate_buy_slippage, estimate_sell_vwap, normalize_book
 
 
 def _book(**overrides):
@@ -38,3 +38,21 @@ def test_insufficient_depth_fails_closed():
 def test_asset_mismatch_fails_closed():
     with pytest.raises(ValueError, match="mismatch"):
         normalize_book(_book(asset_id="different"), expected_token_id="yes-token")
+
+
+def test_sell_vwap_uses_bid_depth_not_mark_price():
+    book = normalize_book(_book(bids=[{"price": "0.59", "size": "2"}, {"price": "0.57", "size": "10"}]), expected_token_id="yes-token")
+    assert estimate_sell_vwap(book, shares=4.0) == pytest.approx((2 * 0.59 + 2 * 0.57) / 4)
+
+
+def test_sell_vwap_requires_full_executable_depth():
+    book = normalize_book(_book(bids=[{"price": "0.59", "size": "1"}]), expected_token_id="yes-token")
+    with pytest.raises(ValueError, match="insufficient bid depth"):
+        estimate_sell_vwap(book, shares=2.0)
+
+
+@pytest.mark.parametrize("shares", [0, -1, float("nan"), float("inf"), True])
+def test_sell_vwap_rejects_invalid_share_amount(shares):
+    book = normalize_book(_book(), expected_token_id="yes-token")
+    with pytest.raises(ValueError):
+        estimate_sell_vwap(book, shares=shares)

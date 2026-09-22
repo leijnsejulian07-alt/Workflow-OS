@@ -1,4 +1,5 @@
 import math
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -80,6 +81,27 @@ class PolymarketPaperStoreTests(unittest.TestCase):
         self.assertEqual(store.open_count(), 1)
         self.assertEqual(store.account().bankroll_usd, 49)
         self.assertEqual(store.account().realized_pnl_usd, 0)
+
+    def test_corrupt_persisted_position_fails_closed_before_settlement(self):
+        store = PolymarketPaperStore(self.path)
+        store.open_yes(market_id='m1', stake_usd=1, entry_price=.5, entry_fair_probability=.7)
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE paper_positions SET entry_price=0 WHERE market_id='m1'")
+        with self.assertRaises(RuntimeError):
+            store.close_yes(market_id='m1', exit_price=.8)
+        self.assertEqual(store.open_count(), 1)
+        self.assertEqual(store.account().bankroll_usd, 49)
+        self.assertEqual(store.account().realized_pnl_usd, 0)
+
+    def test_invalid_close_market_id_fails_without_mutation(self):
+        store = PolymarketPaperStore(self.path)
+        store.open_yes(market_id='m1', stake_usd=1, entry_price=.5, entry_fair_probability=.7)
+        for market_id in ('', ' m1', 'm1 ', True, None):
+            with self.subTest(market_id=market_id):
+                with self.assertRaises(ValueError):
+                    store.close_yes(market_id=market_id, exit_price=.8)
+        self.assertEqual(store.open_count(), 1)
+        self.assertEqual(store.account().bankroll_usd, 49)
 
     def test_naive_or_non_datetime_opened_at_fails_closed_without_debit(self):
         store = PolymarketPaperStore(self.path)

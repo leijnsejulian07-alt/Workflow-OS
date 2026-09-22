@@ -29,6 +29,12 @@ class PolymarketPaperTests(unittest.TestCase):
         result = evaluate_candidate(candidate=self.candidate(official_resolution_source_verified=False), bankroll_usd=50.0, open_positions=0, now_utc=self.now)
         self.assertEqual((result.action, result.reason), ("HOLD", "UNVERIFIED_RESOLUTION_SOURCE"))
 
+    def test_non_boolean_resolution_verification_fails_closed(self):
+        for value in (1, "true", "false", None):
+            with self.subTest(value=value):
+                result = evaluate_candidate(candidate=self.candidate(official_resolution_source_verified=value), bankroll_usd=50.0, open_positions=0, now_utc=self.now)
+                self.assertEqual((result.action, result.reason), ("HOLD", "UNVERIFIED_RESOLUTION_SOURCE"))
+
     def test_liquidity_and_slippage_gates_fail_closed(self):
         low = evaluate_candidate(candidate=self.candidate(liquidity_usd=4_999.0), bankroll_usd=50.0, open_positions=0, now_utc=self.now)
         slip = evaluate_candidate(candidate=self.candidate(estimated_exit_slippage=0.031), bankroll_usd=50.0, open_positions=0, now_utc=self.now)

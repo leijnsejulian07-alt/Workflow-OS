@@ -83,6 +83,15 @@ class PolymarketPaperStore:
             raise ValueError('paper position values must be finite numbers')
         if stake_usd <= 0 or not (0 < entry_price < 1) or not (0 < entry_fair_probability < 1):
             raise ValueError('invalid paper position')
+        if opened_at is not None:
+            if not isinstance(opened_at, datetime):
+                raise ValueError('opened_at must be an aware datetime')
+            try:
+                offset = opened_at.utcoffset()
+            except Exception as exc:
+                raise ValueError('opened_at must be an aware datetime') from exc
+            if opened_at.tzinfo is None or offset is None:
+                raise ValueError('opened_at must be an aware datetime')
         at = (opened_at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
         try:
             with self._connect() as db:

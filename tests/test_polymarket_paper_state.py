@@ -1,6 +1,7 @@
 import math
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from workflow_os.polymarket_paper_state import PolymarketPaperStore
@@ -68,6 +69,33 @@ class PolymarketPaperStoreTests(unittest.TestCase):
             with self.subTest(exit_price=exit_price):
                 with self.assertRaises(ValueError):
                     store.close_yes(market_id='m1', exit_price=exit_price)
+        self.assertEqual(store.open_count(), 1)
+        self.assertEqual(store.account().bankroll_usd, 49)
+
+    def test_naive_or_non_datetime_opened_at_fails_closed_without_debit(self):
+        store = PolymarketPaperStore(self.path)
+        for opened_at in (datetime(2026, 9, 22, 1, 0), '2026-09-22T01:00:00Z', True):
+            with self.subTest(opened_at=opened_at):
+                with self.assertRaises(ValueError):
+                    store.open_yes(
+                        market_id='m1',
+                        stake_usd=1,
+                        entry_price=.5,
+                        entry_fair_probability=.7,
+                        opened_at=opened_at,
+                    )
+        self.assertEqual(store.open_count(), 0)
+        self.assertEqual(store.account().bankroll_usd, 50)
+
+    def test_aware_opened_at_is_normalized_to_utc(self):
+        store = PolymarketPaperStore(self.path)
+        store.open_yes(
+            market_id='m1',
+            stake_usd=1,
+            entry_price=.5,
+            entry_fair_probability=.7,
+            opened_at=datetime(2026, 9, 22, 1, 0, tzinfo=timezone.utc),
+        )
         self.assertEqual(store.open_count(), 1)
         self.assertEqual(store.account().bankroll_usd, 49)
 

@@ -47,12 +47,24 @@ def run_paper_cycle(*, store: PolymarketPaperStore, estimator: FairProbabilityEs
         if result.market_price is None or result.fair_probability is None:
             held += 1
             continue
+        # Asset identity is required for a restart-safe executable exit. Never open a
+        # new position that the monitoring worker cannot map back to the YES book.
+        if not isinstance(result.yes_token_id, str) or not result.yes_token_id or result.yes_token_id != result.yes_token_id.strip():
+            held += 1
+            continue
         stake = min(result.decision.stake_usd, cash)
         if stake <= 0:
             held += 1
             continue
         try:
-            store.open_yes(market_id=result.market_id, stake_usd=stake, entry_price=result.market_price, entry_fair_probability=result.fair_probability, opened_at=now)
+            store.open_yes(
+                market_id=result.market_id,
+                stake_usd=stake,
+                entry_price=result.market_price,
+                entry_fair_probability=result.fair_probability,
+                opened_at=now,
+                yes_token_id=result.yes_token_id,
+            )
         except (KeyError, RuntimeError, ValueError):
             held += 1
             continue

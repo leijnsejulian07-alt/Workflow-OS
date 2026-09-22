@@ -26,6 +26,7 @@ class PaperPosition:
     entry_price: float
     entry_fair_probability: float
     opened_at: datetime
+    yes_token_id: str | None = None
 
 
 class PolymarketPaperStore:
@@ -55,13 +56,16 @@ class PolymarketPaperStore:
             CREATE TABLE IF NOT EXISTS paper_positions (
               market_id TEXT PRIMARY KEY, side TEXT NOT NULL, stake_usd REAL NOT NULL,
               entry_price REAL NOT NULL, entry_fair_probability REAL NOT NULL,
-              opened_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'OPEN'
+              opened_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'OPEN', yes_token_id TEXT
             );
             CREATE TABLE IF NOT EXISTS paper_events (
               id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at TEXT NOT NULL,
               market_id TEXT, event_type TEXT NOT NULL, payload_json TEXT NOT NULL
             );
             """)
+            columns = {row['name'] for row in db.execute("PRAGMA table_info(paper_positions)").fetchall()}
+            if 'yes_token_id' not in columns:
+                db.execute("ALTER TABLE paper_positions ADD COLUMN yes_token_id TEXT")
             db.execute("INSERT OR IGNORE INTO paper_account(singleton,bankroll_usd,peak_bankroll_usd) VALUES(1,?,?)",
                        (self.starting_bankroll_usd, self.starting_bankroll_usd))
 
@@ -88,6 +92,9 @@ class PolymarketPaperStore:
             raise RuntimeError('paper position contains non-finite ledger state')
         if row['stake_usd'] <= 0 or not (0 < row['entry_price'] < 1) or not (0 < row['entry_fair_probability'] < 1):
             raise RuntimeError('paper position contains impossible ledger state')
+        token = row['yes_token_id']
+        if token is not None and (not isinstance(token, str) or not token or token != token.strip()):
+            raise RuntimeError('paper position contains invalid YES token id')
 
     def account(self) -> PaperAccount:
         with self._connect() as db:
@@ -100,7 +107,11 @@ class PolymarketPaperStore:
             return int(db.execute("SELECT COUNT(*) FROM paper_positions WHERE status='OPEN'").fetchone()[0])
 
     def open_positions(self) -> tuple[PaperPosition, ...]:
-        """Return validated durable positions for the monitoring/exit loop."""
+        """Return validated durable positions for the monitoring/exit loop.
+
+        Legacy rows can have ``yes_token_id=None``. Consumers must treat those rows as
+        non-executable: asset identity cannot be reconstructed safely after restart.
+        """
         with self._connect() as db:
             rows = db.execute("SELECT * FROM paper_positions WHERE status='OPEN' ORDER BY opened_at, market_id").fetchall()
         positions: list[PaperPosition] = []
@@ -119,6 +130,7 @@ class PolymarketPaperStore:
                 entry_price=float(row['entry_price']),
                 entry_fair_probability=float(row['entry_fair_probability']),
                 opened_at=opened_at,
+                yes_token_id=row['yes_token_id'],
             ))
         return tuple(positions)
 
@@ -126,9 +138,12 @@ class PolymarketPaperStore:
         with self._connect() as db:
             self._insert_event(db, market_id, 'DECISION', asdict(decision))
 
-    def open_yes(self, *, market_id: str, stake_usd: float, entry_price: float, entry_fair_probability: float, opened_at: datetime | None = None) -> None:
+    def open_yes(self, *, market_id: str, stake_usd: float, entry_price: float, entry_fair_probability: float,
+                 opened_at: datetime | None = None, yes_token_id: str | None = None) -> None:
         if not isinstance(market_id, str) or not market_id or market_id != market_id.strip():
             raise ValueError('invalid market id')
+        if yes_token_id is not None and (not isinstance(yes_token_id, str) or not yes_token_id or yes_token_id != yes_token_id.strip()):
+            raise ValueError('invalid YES token id')
         numeric_values = (stake_usd, entry_price, entry_fair_probability)
         if any(not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value)) for value in numeric_values):
             raise ValueError('paper position values must be finite numbers')
@@ -152,10 +167,10 @@ class PolymarketPaperStore:
                     raise RuntimeError('paper account stopped')
                 if stake_usd > account['bankroll_usd']:
                     raise ValueError('stake exceeds bankroll')
-                db.execute("INSERT INTO paper_positions(market_id,side,stake_usd,entry_price,entry_fair_probability,opened_at) VALUES(?,?,?,?,?,?)",
-                           (market_id, 'YES', stake_usd, entry_price, entry_fair_probability, at))
+                db.execute("INSERT INTO paper_positions(market_id,side,stake_usd,entry_price,entry_fair_probability,opened_at,yes_token_id) VALUES(?,?,?,?,?,?,?)",
+                           (market_id, 'YES', stake_usd, entry_price, entry_fair_probability, at, yes_token_id))
                 db.execute("UPDATE paper_account SET bankroll_usd=bankroll_usd-? WHERE singleton=1", (stake_usd,))
-                self._insert_event(db, market_id, 'OPEN', {'stake_usd': stake_usd, 'entry_price': entry_price, 'entry_fair_probability': entry_fair_probability})
+                self._insert_event(db, market_id, 'OPEN', {'stake_usd': stake_usd, 'entry_price': entry_price, 'entry_fair_probability': entry_fair_probability, 'yes_token_id': yes_token_id})
         except sqlite3.IntegrityError as exc:
             raise ValueError('paper position already exists or violates ledger constraints') from exc
 

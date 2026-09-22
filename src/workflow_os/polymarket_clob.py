@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode
@@ -85,3 +86,30 @@ def estimate_buy_slippage(book: ClobBook, *, stake_usd: float) -> float:
         raise ValueError("insufficient ask depth")
     average_price = spent / shares
     return max(0.0, average_price / book.asks[0].price - 1.0)
+
+
+def estimate_sell_vwap(book: ClobBook, *, shares: float) -> float:
+    """Conservative executable paper-exit VWAP over current bids.
+
+    This is read-only and never submits an order. Full requested depth is required;
+    partial liquidity fails closed instead of overstating paper proceeds.
+    """
+    if (not isinstance(shares, (int, float)) or isinstance(shares, bool)
+            or not math.isfinite(float(shares)) or shares <= 0 or not book.bids):
+        raise ValueError("positive finite shares and bids required")
+    remaining = float(shares)
+    proceeds = 0.0
+    filled = 0.0
+    for level in book.bids:
+        take = min(remaining, level.size)
+        proceeds += take * level.price
+        filled += take
+        remaining -= take
+        if remaining <= 1e-9:
+            break
+    if remaining > 1e-9 or filled <= 0:
+        raise ValueError("insufficient bid depth")
+    vwap = proceeds / filled
+    if not math.isfinite(vwap) or not 0.0 < vwap < 1.0:
+        raise ValueError("invalid sell VWAP")
+    return vwap

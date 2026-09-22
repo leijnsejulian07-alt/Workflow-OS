@@ -72,6 +72,15 @@ class PolymarketPaperStoreTests(unittest.TestCase):
         self.assertEqual(store.open_count(), 1)
         self.assertEqual(store.account().bankroll_usd, 49)
 
+    def test_settlement_overflow_fails_closed_without_closing_position(self):
+        store = PolymarketPaperStore(self.path)
+        store.open_yes(market_id='m1', stake_usd=1, entry_price=5e-324, entry_fair_probability=.7)
+        with self.assertRaises(ValueError):
+            store.close_yes(market_id='m1', exit_price=1)
+        self.assertEqual(store.open_count(), 1)
+        self.assertEqual(store.account().bankroll_usd, 49)
+        self.assertEqual(store.account().realized_pnl_usd, 0)
+
     def test_naive_or_non_datetime_opened_at_fails_closed_without_debit(self):
         store = PolymarketPaperStore(self.path)
         for opened_at in (datetime(2026, 9, 22, 1, 0), '2026-09-22T01:00:00Z', True):

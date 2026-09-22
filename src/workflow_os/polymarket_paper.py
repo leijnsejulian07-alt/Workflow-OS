@@ -66,7 +66,7 @@ def evaluate_candidate(
         return PolymarketPaperDecision("STOP", "BANKROLL_DEPLETED")
     if open_positions < 0 or open_positions >= policy.maximum_open_positions:
         return PolymarketPaperDecision("HOLD", "OPEN_POSITION_LIMIT")
-    if not candidate.official_resolution_source_verified:
+    if candidate.official_resolution_source_verified is not True:
         return PolymarketPaperDecision("HOLD", "UNVERIFIED_RESOLUTION_SOURCE")
     if not math.isfinite(candidate.liquidity_usd) or candidate.liquidity_usd < policy.minimum_liquidity_usd:
         return PolymarketPaperDecision("HOLD", "INSUFFICIENT_LIQUIDITY")
@@ -81,7 +81,6 @@ def evaluate_candidate(
     if edge_points <= policy.minimum_edge_points:
         return PolymarketPaperDecision("HOLD", "EDGE_BELOW_THRESHOLD", edge_points=edge_points)
 
-    # Guide formula for a YES contract: b=(1-P)/P; f=(b*p-(1-p))/b.
     price = candidate.market_price
     p = candidate.fair_probability
     b = (1.0 - price) / price

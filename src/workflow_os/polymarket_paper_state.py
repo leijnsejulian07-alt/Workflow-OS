@@ -19,6 +19,15 @@ class PaperAccount:
     stop_reason: str | None
 
 
+@dataclass(frozen=True)
+class PaperPosition:
+    market_id: str
+    stake_usd: float
+    entry_price: float
+    entry_fair_probability: float
+    opened_at: datetime
+
+
 class PolymarketPaperStore:
     """Small durable paper ledger. It never holds credentials or reaches live execution."""
 
@@ -89,6 +98,29 @@ class PolymarketPaperStore:
     def open_count(self) -> int:
         with self._connect() as db:
             return int(db.execute("SELECT COUNT(*) FROM paper_positions WHERE status='OPEN'").fetchone()[0])
+
+    def open_positions(self) -> tuple[PaperPosition, ...]:
+        """Return validated durable positions for the monitoring/exit loop."""
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM paper_positions WHERE status='OPEN' ORDER BY opened_at, market_id").fetchall()
+        positions: list[PaperPosition] = []
+        for row in rows:
+            self._validate_open_position_row(row)
+            try:
+                opened_at = datetime.fromisoformat(row['opened_at'])
+                if opened_at.tzinfo is None or opened_at.utcoffset() is None:
+                    raise ValueError
+                opened_at = opened_at.astimezone(timezone.utc)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise RuntimeError('paper position contains invalid opened_at') from exc
+            positions.append(PaperPosition(
+                market_id=row['market_id'],
+                stake_usd=float(row['stake_usd']),
+                entry_price=float(row['entry_price']),
+                entry_fair_probability=float(row['entry_fair_probability']),
+                opened_at=opened_at,
+            ))
+        return tuple(positions)
 
     def record_decision(self, market_id: str, decision: PolymarketPaperDecision) -> None:
         with self._connect() as db:

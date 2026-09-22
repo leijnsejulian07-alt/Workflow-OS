@@ -65,6 +65,20 @@ class PolymarketPaperStore:
     def account(self) -> PaperAccount:
         with self._connect() as db:
             row = db.execute("SELECT * FROM paper_account WHERE singleton=1").fetchone()
+        if row is None:
+            raise RuntimeError('paper account missing')
+        numeric_values = (row['bankroll_usd'], row['peak_bankroll_usd'], row['realized_pnl_usd'])
+        if any(
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(float(value))
+            for value in numeric_values
+        ):
+            raise RuntimeError('paper account contains non-finite ledger state')
+        if row['bankroll_usd'] < 0 or row['peak_bankroll_usd'] <= 0 or row['bankroll_usd'] > row['peak_bankroll_usd']:
+            raise RuntimeError('paper account contains impossible ledger state')
+        if row['stopped'] not in (0, 1):
+            raise RuntimeError('paper account contains invalid stop state')
         return PaperAccount(row['bankroll_usd'], row['peak_bankroll_usd'], row['realized_pnl_usd'], bool(row['stopped']), row['stop_reason'])
 
     def open_count(self) -> int:

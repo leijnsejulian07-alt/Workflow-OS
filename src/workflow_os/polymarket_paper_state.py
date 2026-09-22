@@ -23,12 +23,8 @@ class PolymarketPaperStore:
     """Small durable paper ledger. It never holds credentials or reaches live execution."""
 
     def __init__(self, path: str | Path, *, starting_bankroll_usd: float = 50.0):
-        if (
-            not isinstance(starting_bankroll_usd, (int, float))
-            or isinstance(starting_bankroll_usd, bool)
-            or not math.isfinite(float(starting_bankroll_usd))
-            or float(starting_bankroll_usd) <= 0
-        ):
+        if (not isinstance(starting_bankroll_usd, (int, float)) or isinstance(starting_bankroll_usd, bool)
+                or not math.isfinite(float(starting_bankroll_usd)) or float(starting_bankroll_usd) <= 0):
             raise ValueError('starting_bankroll_usd must be a positive finite number')
         self.path = str(path)
         self.starting_bankroll_usd = float(starting_bankroll_usd)
@@ -57,28 +53,26 @@ class PolymarketPaperStore:
               market_id TEXT, event_type TEXT NOT NULL, payload_json TEXT NOT NULL
             );
             """)
-            db.execute(
-                "INSERT OR IGNORE INTO paper_account(singleton,bankroll_usd,peak_bankroll_usd) VALUES(1,?,?)",
-                (self.starting_bankroll_usd, self.starting_bankroll_usd),
-            )
+            db.execute("INSERT OR IGNORE INTO paper_account(singleton,bankroll_usd,peak_bankroll_usd) VALUES(1,?,?)",
+                       (self.starting_bankroll_usd, self.starting_bankroll_usd))
 
-    def account(self) -> PaperAccount:
-        with self._connect() as db:
-            row = db.execute("SELECT * FROM paper_account WHERE singleton=1").fetchone()
+    @staticmethod
+    def _validate_account_row(row: sqlite3.Row | None) -> None:
         if row is None:
             raise RuntimeError('paper account missing')
         numeric_values = (row['bankroll_usd'], row['peak_bankroll_usd'], row['realized_pnl_usd'])
-        if any(
-            not isinstance(value, (int, float))
-            or isinstance(value, bool)
-            or not math.isfinite(float(value))
-            for value in numeric_values
-        ):
+        if any(not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value))
+               for value in numeric_values):
             raise RuntimeError('paper account contains non-finite ledger state')
         if row['bankroll_usd'] < 0 or row['peak_bankroll_usd'] <= 0 or row['bankroll_usd'] > row['peak_bankroll_usd']:
             raise RuntimeError('paper account contains impossible ledger state')
         if row['stopped'] not in (0, 1):
             raise RuntimeError('paper account contains invalid stop state')
+
+    def account(self) -> PaperAccount:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM paper_account WHERE singleton=1").fetchone()
+        self._validate_account_row(row)
         return PaperAccount(row['bankroll_usd'], row['peak_bankroll_usd'], row['realized_pnl_usd'], bool(row['stopped']), row['stop_reason'])
 
     def open_count(self) -> int:
@@ -109,7 +103,8 @@ class PolymarketPaperStore:
         at = (opened_at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
         try:
             with self._connect() as db:
-                account = db.execute("SELECT bankroll_usd,stopped FROM paper_account WHERE singleton=1").fetchone()
+                account = db.execute("SELECT * FROM paper_account WHERE singleton=1").fetchone()
+                self._validate_account_row(account)
                 if account['stopped']:
                     raise RuntimeError('paper account stopped')
                 if stake_usd > account['bankroll_usd']:
@@ -119,19 +114,15 @@ class PolymarketPaperStore:
                 db.execute("UPDATE paper_account SET bankroll_usd=bankroll_usd-? WHERE singleton=1", (stake_usd,))
                 self._insert_event(db, market_id, 'OPEN', {'stake_usd': stake_usd, 'entry_price': entry_price, 'entry_fair_probability': entry_fair_probability})
         except sqlite3.IntegrityError as exc:
-            # Duplicate market IDs are expected under retries/races. Keep the storage
-            # implementation detail behind the store boundary so callers can fail closed.
             raise ValueError('paper position already exists or violates ledger constraints') from exc
 
     def close_yes(self, *, market_id: str, exit_price: float) -> float:
-        if (
-            not isinstance(exit_price, (int, float))
-            or isinstance(exit_price, bool)
-            or not math.isfinite(float(exit_price))
-            or not 0 <= exit_price <= 1
-        ):
+        if (not isinstance(exit_price, (int, float)) or isinstance(exit_price, bool)
+                or not math.isfinite(float(exit_price)) or not 0 <= exit_price <= 1):
             raise ValueError('invalid exit price')
         with self._connect() as db:
+            account = db.execute("SELECT * FROM paper_account WHERE singleton=1").fetchone()
+            self._validate_account_row(account)
             row = db.execute("SELECT * FROM paper_positions WHERE market_id=? AND status='OPEN'", (market_id,)).fetchone()
             if row is None:
                 raise KeyError(market_id)
@@ -149,6 +140,8 @@ class PolymarketPaperStore:
 
     def stop(self, reason: str) -> None:
         with self._connect() as db:
+            account = db.execute("SELECT * FROM paper_account WHERE singleton=1").fetchone()
+            self._validate_account_row(account)
             db.execute("UPDATE paper_account SET stopped=1, stop_reason=? WHERE singleton=1", (reason,))
             self._insert_event(db, None, 'STOP', {'reason': reason})
 

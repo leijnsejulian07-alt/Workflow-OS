@@ -69,6 +69,17 @@ class PolymarketPaperStore:
         if row['stopped'] not in (0, 1):
             raise RuntimeError('paper account contains invalid stop state')
 
+    @staticmethod
+    def _validate_open_position_row(row: sqlite3.Row) -> None:
+        if row['side'] != 'YES' or row['status'] != 'OPEN':
+            raise RuntimeError('paper position contains invalid state')
+        numeric_values = (row['stake_usd'], row['entry_price'], row['entry_fair_probability'])
+        if any(not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value))
+               for value in numeric_values):
+            raise RuntimeError('paper position contains non-finite ledger state')
+        if row['stake_usd'] <= 0 or not (0 < row['entry_price'] < 1) or not (0 < row['entry_fair_probability'] < 1):
+            raise RuntimeError('paper position contains impossible ledger state')
+
     def account(self) -> PaperAccount:
         with self._connect() as db:
             row = db.execute("SELECT * FROM paper_account WHERE singleton=1").fetchone()
@@ -117,6 +128,8 @@ class PolymarketPaperStore:
             raise ValueError('paper position already exists or violates ledger constraints') from exc
 
     def close_yes(self, *, market_id: str, exit_price: float) -> float:
+        if not isinstance(market_id, str) or not market_id or market_id != market_id.strip():
+            raise ValueError('invalid market id')
         if (not isinstance(exit_price, (int, float)) or isinstance(exit_price, bool)
                 or not math.isfinite(float(exit_price)) or not 0 <= exit_price <= 1):
             raise ValueError('invalid exit price')
@@ -126,6 +139,7 @@ class PolymarketPaperStore:
             row = db.execute("SELECT * FROM paper_positions WHERE market_id=? AND status='OPEN'", (market_id,)).fetchone()
             if row is None:
                 raise KeyError(market_id)
+            self._validate_open_position_row(row)
             proceeds = row['stake_usd'] * exit_price / row['entry_price']
             pnl = proceeds - row['stake_usd']
             if not math.isfinite(proceeds) or not math.isfinite(pnl):

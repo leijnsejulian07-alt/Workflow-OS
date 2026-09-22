@@ -34,6 +34,19 @@ class PolymarketPaperCorruptionTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.store.account()
 
+    def test_corrupt_account_blocks_open_before_debit(self):
+        self._corrupt_account('bankroll_usd=51')
+        with self.assertRaises(RuntimeError):
+            self.store.open_yes(market_id='m1', stake_usd=1, entry_price=.5, entry_fair_probability=.7)
+        self.assertEqual(self.store.open_count(), 0)
+
+    def test_corrupt_account_blocks_close_before_position_mutation(self):
+        self.store.open_yes(market_id='m1', stake_usd=1, entry_price=.5, entry_fair_probability=.7)
+        self._corrupt_account('stopped=2')
+        with self.assertRaises(RuntimeError):
+            self.store.close_yes(market_id='m1', exit_price=.6)
+        self.assertEqual(self.store.open_count(), 1)
+
 
 if __name__ == '__main__':
     unittest.main()

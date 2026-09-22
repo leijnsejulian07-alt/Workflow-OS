@@ -44,7 +44,7 @@ def run_paper_cycle(*, store: PolymarketPaperStore, estimator: FairProbabilityEs
         if result.decision.action != "PAPER_BUY_YES" or open_positions >= policy.maximum_open_positions:
             held += 1
             continue
-        if result.market_price is None or result.fair_probability is None or not result.yes_token_id:
+        if result.market_price is None or result.fair_probability is None:
             held += 1
             continue
         stake = min(result.decision.stake_usd, cash)
@@ -52,7 +52,7 @@ def run_paper_cycle(*, store: PolymarketPaperStore, estimator: FairProbabilityEs
             held += 1
             continue
         try:
-            store.open_yes(market_id=result.market_id, yes_token_id=result.yes_token_id, stake_usd=stake, entry_price=result.market_price, entry_fair_probability=result.fair_probability, opened_at=now)
+            store.open_yes(market_id=result.market_id, stake_usd=stake, entry_price=result.market_price, entry_fair_probability=result.fair_probability, opened_at=now)
         except (KeyError, RuntimeError, ValueError):
             held += 1
             continue

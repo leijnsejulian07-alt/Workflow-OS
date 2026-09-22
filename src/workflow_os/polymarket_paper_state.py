@@ -123,6 +123,8 @@ class PolymarketPaperStore:
                 raise KeyError(market_id)
             proceeds = row['stake_usd'] * exit_price / row['entry_price']
             pnl = proceeds - row['stake_usd']
+            if not math.isfinite(proceeds) or not math.isfinite(pnl):
+                raise ValueError('paper settlement must remain finite')
             db.execute("UPDATE paper_positions SET status='CLOSED' WHERE market_id=?", (market_id,))
             db.execute("UPDATE paper_account SET bankroll_usd=bankroll_usd+?, realized_pnl_usd=realized_pnl_usd+? WHERE singleton=1", (proceeds, pnl))
             current = db.execute("SELECT bankroll_usd,peak_bankroll_usd FROM paper_account WHERE singleton=1").fetchone()

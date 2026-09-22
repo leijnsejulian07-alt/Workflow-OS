@@ -107,6 +107,16 @@ def drawdown_decision(*, bankroll_usd: float, peak_bankroll_usd: float, policy: 
 
 
 def should_exit(*, entry_fair_probability: float, current_fair_probability: float, hours_to_resolution: float, mispricing_closed: bool, policy: PolymarketPaperPolicy = PolymarketPaperPolicy()) -> PolymarketPaperDecision:
+    """Fail-safe paper exit gate: malformed monitoring input reduces exposure rather than silently holding."""
+    if (
+        not _finite_probability(entry_fair_probability)
+        or not _finite_probability(current_fair_probability)
+        or not isinstance(hours_to_resolution, (int, float))
+        or isinstance(hours_to_resolution, bool)
+        or not math.isfinite(float(hours_to_resolution))
+        or not isinstance(mispricing_closed, bool)
+    ):
+        return PolymarketPaperDecision("PAPER_EXIT", "INVALID_EXIT_INPUT")
     if mispricing_closed:
         return PolymarketPaperDecision("PAPER_EXIT", "MISPRICING_CLOSED")
     if abs(current_fair_probability - entry_fair_probability) * 100.0 > policy.fair_value_exit_change_points:

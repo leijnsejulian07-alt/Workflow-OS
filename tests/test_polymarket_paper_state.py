@@ -1,3 +1,4 @@
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -42,6 +43,33 @@ class PolymarketPaperStoreTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             store.open_yes(market_id='m1', stake_usd=1, entry_price=.5, entry_fair_probability=.7)
         self.assertTrue(store.account().stopped)
+
+    def test_nonfinite_values_fail_closed_without_mutating_ledger(self):
+        store = PolymarketPaperStore(self.path)
+        for stake in (math.nan, math.inf, -math.inf, True):
+            with self.subTest(stake=stake):
+                with self.assertRaises(ValueError):
+                    store.open_yes(market_id='m1', stake_usd=stake, entry_price=.5, entry_fair_probability=.7)
+        self.assertEqual(store.open_count(), 0)
+        self.assertEqual(store.account().bankroll_usd, 50)
+
+    def test_invalid_starting_bankroll_fails_before_database_initialization(self):
+        for bankroll in (math.nan, math.inf, -1, 0, True):
+            with self.subTest(bankroll=bankroll):
+                candidate = Path(self.tmp.name) / f'invalid-{repr(bankroll)}.sqlite3'
+                with self.assertRaises(ValueError):
+                    PolymarketPaperStore(candidate, starting_bankroll_usd=bankroll)
+                self.assertFalse(candidate.exists())
+
+    def test_nonfinite_exit_price_does_not_close_position(self):
+        store = PolymarketPaperStore(self.path)
+        store.open_yes(market_id='m1', stake_usd=1, entry_price=.5, entry_fair_probability=.7)
+        for exit_price in (math.nan, math.inf, -math.inf, True):
+            with self.subTest(exit_price=exit_price):
+                with self.assertRaises(ValueError):
+                    store.close_yes(market_id='m1', exit_price=exit_price)
+        self.assertEqual(store.open_count(), 1)
+        self.assertEqual(store.account().bankroll_usd, 49)
 
 
 if __name__ == '__main__':

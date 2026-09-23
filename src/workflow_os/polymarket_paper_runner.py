@@ -30,7 +30,7 @@ def _exit_open_positions(
     """Monitor durable paper positions and settle only against executable evidence.
 
     External-data failures never invent a fill. Active-market exits require full CLOB
-    bid depth. A closed contract settles only when Gamma exposes an unambiguous
+    bid depth. A non-tradable contract settles only when Gamma exposes an unambiguous
     terminal YES value (exactly 0 or 1) for the same durable token identity.
     """
     exited = held = 0
@@ -50,10 +50,11 @@ def _exit_open_positions(
             market = fetch_gamma_market(market_id=position.market_id)
             if market.yes_token_id != position.yes_token_id:
                 raise ValueError("durable YES token identity mismatch")
-            # Once order trading has ended there may be no executable bid book left.
-            # For paper accounting, settle only an unambiguous terminal contract value;
-            # any non-terminal closed state remains open/fail-closed for later evidence.
-            if market.closed and not market.active:
+            # Treat either terminal signal as non-tradable. Conflicting Gamma flags
+            # (closed=True/active=True or closed=False/active=False) must never route
+            # into estimator/CLOB execution. Settle only an unambiguous 0/1 value;
+            # otherwise hold until official state converges.
+            if market.closed or not market.active:
                 if market.yes_price in (0.0, 1.0):
                     store.close_yes(market_id=position.market_id, exit_price=market.yes_price)
                     exited_market_ids.add(position.market_id)

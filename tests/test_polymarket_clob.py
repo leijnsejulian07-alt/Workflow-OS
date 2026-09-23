@@ -18,6 +18,20 @@ def test_normalizes_and_sorts_official_book_shape():
     assert book.asks[0].price == pytest.approx(0.60)
 
 
+@pytest.mark.parametrize(
+    "level",
+    [
+        {"price": "nan", "size": "1"},
+        {"price": "inf", "size": "1"},
+        {"price": "0.50", "size": "nan"},
+        {"price": "0.50", "size": "inf"},
+    ],
+)
+def test_non_finite_orderbook_levels_fail_closed(level):
+    with pytest.raises(ValueError, match="invalid orderbook price/size"):
+        normalize_book(_book(bids=[level]), expected_token_id="yes-token")
+
+
 def test_small_order_has_zero_price_impact_at_best_ask():
     book = normalize_book(_book(), expected_token_id="yes-token")
     assert estimate_buy_slippage(book, stake_usd=3.0) == pytest.approx(0.0)

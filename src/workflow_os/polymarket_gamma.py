@@ -67,7 +67,10 @@ def normalize_gamma_market(raw: dict[str, Any]) -> GammaMarket:
 
     liquidity_raw = raw.get("liquidityNum", raw.get("liquidity"))
     liquidity = float(liquidity_raw)
-    if liquidity < 0:
+    # External numeric input must be finite before it enters economics or ledger
+    # decisions. NaN compares false to both threshold checks and would otherwise
+    # survive normalization as an ambiguous value.
+    if not math.isfinite(liquidity) or liquidity < 0:
         raise ValueError("invalid liquidity")
 
     end_raw = raw.get("endDateIso") or raw.get("endDate")

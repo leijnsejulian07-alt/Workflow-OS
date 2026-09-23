@@ -31,7 +31,8 @@ def _levels(raw: Any, *, reverse: bool) -> tuple[BookLevel, ...]:
         if not isinstance(item, dict):
             raise ValueError("invalid orderbook level")
         price, size = float(item["price"]), float(item["size"])
-        if not 0.0 < price < 1.0 or size <= 0.0:
+        if (not math.isfinite(price) or not math.isfinite(size)
+                or not 0.0 < price < 1.0 or size <= 0.0):
             raise ValueError("invalid orderbook price/size")
         levels.append(BookLevel(price, size))
     return tuple(sorted(levels, key=lambda x: x.price, reverse=reverse))

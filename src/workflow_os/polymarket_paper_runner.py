@@ -27,12 +27,11 @@ def _exit_open_positions(
     policy: PolymarketPaperPolicy,
     now: datetime,
 ) -> tuple[int, int, set[str]]:
-    """Monitor durable paper positions and settle only against executable bid depth.
+    """Monitor durable paper positions and settle only against executable evidence.
 
-    External-data failures never invent a fill. They are recorded as fail-closed exit
-    decisions where possible and leave the position open for a later bounded retry.
-    The returned market IDs are a cycle-local re-entry guard: a market deliberately
-    exited in this pass cannot immediately be reopened by the subsequent scan.
+    External-data failures never invent a fill. Active-market exits require full CLOB
+    bid depth. A closed contract settles only when Gamma exposes an unambiguous
+    terminal YES value (exactly 0 or 1) for the same durable token identity.
     """
     exited = held = 0
     exited_market_ids: set[str] = set()
@@ -51,6 +50,14 @@ def _exit_open_positions(
             market = fetch_gamma_market(market_id=position.market_id)
             if market.yes_token_id != position.yes_token_id:
                 raise ValueError("durable YES token identity mismatch")
+            # Once order trading has ended there may be no executable bid book left.
+            # For paper accounting, settle only an unambiguous terminal contract value;
+            # any non-terminal closed state remains open/fail-closed for later evidence.
+            if market.closed and not market.active and market.yes_price in (0.0, 1.0):
+                store.close_yes(market_id=position.market_id, exit_price=market.yes_price)
+                exited_market_ids.add(position.market_id)
+                exited += 1
+                continue
             evidence = estimator(market)
             if not _valid_evidence(evidence, now_utc=now):
                 raise ValueError("missing or stale fair-value evidence")

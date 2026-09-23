@@ -25,9 +25,15 @@ def test_normalizes_and_sorts_official_book_shape():
         {"price": "inf", "size": "1"},
         {"price": "0.50", "size": "nan"},
         {"price": "0.50", "size": "inf"},
+        {"price": True, "size": "1"},
+        {"price": "0.50", "size": True},
+        {"price": None, "size": "1"},
+        {"price": "0.50", "size": None},
+        {"price": {}, "size": "1"},
+        {"price": "0.50", "size": {}},
     ],
 )
-def test_non_finite_orderbook_levels_fail_closed(level):
+def test_invalid_orderbook_levels_fail_closed(level):
     with pytest.raises(ValueError, match="invalid orderbook price/size"):
         normalize_book(_book(bids=[level]), expected_token_id="yes-token")
 

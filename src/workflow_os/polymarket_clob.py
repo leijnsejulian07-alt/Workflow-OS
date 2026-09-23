@@ -30,7 +30,13 @@ def _levels(raw: Any, *, reverse: bool) -> tuple[BookLevel, ...]:
     for item in raw:
         if not isinstance(item, dict):
             raise ValueError("invalid orderbook level")
-        price, size = float(item["price"]), float(item["size"])
+        raw_price, raw_size = item.get("price"), item.get("size")
+        if isinstance(raw_price, bool) or isinstance(raw_size, bool):
+            raise ValueError("invalid orderbook price/size")
+        try:
+            price, size = float(raw_price), float(raw_size)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("invalid orderbook price/size") from exc
         if (not math.isfinite(price) or not math.isfinite(size)
                 or not 0.0 < price < 1.0 or size <= 0.0):
             raise ValueError("invalid orderbook price/size")

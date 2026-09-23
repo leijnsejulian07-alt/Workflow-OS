@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 GAMMA_MARKETS_URL = "https://gamma-api.polymarket.com/markets"
@@ -85,21 +85,41 @@ def normalize_gamma_market(raw: dict[str, Any]) -> GammaMarket:
     )
 
 
-def fetch_gamma_markets(*, limit: int = 100, timeout_seconds: float = 10.0) -> list[GammaMarket]:
-    """Read-only official Gamma ingest. No credentials, wallet, or trading side effects."""
-    if not 1 <= limit <= 100:
-        raise ValueError("limit must be between 1 and 100")
+def _read_gamma_json(url: str, *, timeout_seconds: float) -> Any:
     if not 0 < timeout_seconds <= 30:
         raise ValueError("timeout_seconds must be in (0, 30]")
-    query = urlencode({"active": "true", "closed": "false", "limit": limit})
-    request = Request(f"{GAMMA_MARKETS_URL}?{query}", headers={"Accept": "application/json", "User-Agent": "Workflow-OS/PolymarketPaper"})
+    request = Request(url, headers={"Accept": "application/json", "User-Agent": "Workflow-OS/PolymarketPaper"})
     with urlopen(request, timeout=timeout_seconds) as response:
         if getattr(response, "status", 200) != 200:
             raise RuntimeError(f"Gamma HTTP {response.status}")
         body = response.read(2_000_001)
     if len(body) > 2_000_000:
         raise RuntimeError("Gamma response exceeds 2 MB")
-    payload = json.loads(body.decode("utf-8"))
+    return json.loads(body.decode("utf-8"))
+
+
+def fetch_gamma_market(*, market_id: str, timeout_seconds: float = 10.0) -> GammaMarket:
+    """Fetch one market by exact Gamma id for restart-safe position monitoring."""
+    clean_id = str(market_id).strip()
+    if not clean_id or len(clean_id) > 128:
+        raise ValueError("market_id must be non-empty and at most 128 characters")
+    payload = _read_gamma_json(
+        f"{GAMMA_MARKETS_URL}/{quote(clean_id, safe='')}", timeout_seconds=timeout_seconds
+    )
+    if not isinstance(payload, dict):
+        raise ValueError("Gamma market response must be an object")
+    market = normalize_gamma_market(payload)
+    if market.market_id != clean_id:
+        raise ValueError("Gamma market identity mismatch")
+    return market
+
+
+def fetch_gamma_markets(*, limit: int = 100, timeout_seconds: float = 10.0) -> list[GammaMarket]:
+    """Read-only official Gamma ingest. No credentials, wallet, or trading side effects."""
+    if not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100")
+    query = urlencode({"active": "true", "closed": "false", "limit": limit})
+    payload = _read_gamma_json(f"{GAMMA_MARKETS_URL}?{query}", timeout_seconds=timeout_seconds)
     if not isinstance(payload, list):
         raise ValueError("Gamma response must be a list")
 

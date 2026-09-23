@@ -43,6 +43,20 @@ def test_maps_token_id_using_same_yes_outcome_index():
     assert market.yes_token_id == "yes-token"
 
 
+@pytest.mark.parametrize("terminal_price", ["0", "1"])
+def test_normalizes_terminal_price_for_closed_market_monitoring(terminal_price):
+    other = "1" if terminal_price == "0" else "0"
+    market = normalize_gamma_market(_raw(
+        outcomePrices=json.dumps([terminal_price, other]),
+        active=False,
+        closed=True,
+        acceptingOrders=False,
+    ))
+    assert market.closed is True
+    assert market.active is False
+    assert market.yes_price == float(terminal_price)
+
+
 class _Response:
     status = 200
 

@@ -58,11 +58,14 @@ def normalize_book(raw: Any, *, expected_token_id: str) -> ClobBook:
 
 def fetch_book(token_id: str, *, timeout_seconds: float = 10.0) -> ClobBook:
     """Read-only official CLOB /book request for one documented token/asset id."""
-    token_id = token_id.strip()
-    if not token_id:
+    if not isinstance(token_id, str) or not token_id.strip():
         raise ValueError("token_id required")
-    if not 0 < timeout_seconds <= 30:
-        raise ValueError("timeout_seconds must be in (0, 30]")
+    token_id = token_id.strip()
+    if (not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool)
+            or not math.isfinite(float(timeout_seconds))
+            or not 0 < float(timeout_seconds) <= 30):
+        raise ValueError("timeout_seconds must be finite and in (0, 30]")
+    timeout_seconds = float(timeout_seconds)
     request = Request(
         f"{CLOB_BOOK_URL}?{urlencode({'token_id': token_id})}",
         headers={"Accept": "application/json", "User-Agent": "Workflow-OS/PolymarketPaper"},

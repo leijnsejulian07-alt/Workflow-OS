@@ -117,6 +117,8 @@ def test_fetch_exact_market_rejects_unsafe_path_id_before_network(monkeypatch):
         {"clobTokenIds": '["", "no-token"]'},
         {"clobTokenIds": '["yes-token"]'},
         {"liquidityNum": -1},
+        {"liquidityNum": "nan"},
+        {"liquidityNum": "inf"},
         {"endDate": ""},
     ],
 )

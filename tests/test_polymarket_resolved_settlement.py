@@ -74,10 +74,17 @@ def test_runner_holds_ambiguous_closed_market(monkeypatch, tmp_path):
         "workflow_os.polymarket_paper_runner.fetch_gamma_market", lambda **_: ambiguous
     )
     monkeypatch.setattr(
+        "workflow_os.polymarket_paper_runner.fetch_book",
+        lambda *_: (_ for _ in ()).throw(AssertionError("closed ambiguous market must not use CLOB")),
+    )
+    monkeypatch.setattr(
         "workflow_os.polymarket_paper_runner.scan_paper_markets", lambda **_: []
     )
 
-    summary = run_paper_cycle(store=store, estimator=lambda _: None, now_utc=now)
+    def forbidden_estimator(_):
+        raise AssertionError("closed ambiguous market must not be re-valued as tradable")
+
+    summary = run_paper_cycle(store=store, estimator=forbidden_estimator, now_utc=now)
 
     assert summary.exited == 0
     assert summary.held == 1

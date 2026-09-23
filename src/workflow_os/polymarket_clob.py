@@ -44,7 +44,12 @@ def _levels(raw: Any, *, reverse: bool) -> tuple[BookLevel, ...]:
     return tuple(sorted(levels, key=lambda x: x.price, reverse=reverse))
 
 
-def normalize_book(raw: dict[str, Any], *, expected_token_id: str) -> ClobBook:
+def normalize_book(raw: Any, *, expected_token_id: str) -> ClobBook:
+    if not isinstance(raw, dict):
+        raise ValueError("orderbook response must be an object")
+    if not isinstance(expected_token_id, str) or not expected_token_id.strip():
+        raise ValueError("expected_token_id required")
+    expected_token_id = expected_token_id.strip()
     asset_id = str(raw.get("asset_id", "")).strip()
     if not asset_id or asset_id != expected_token_id:
         raise ValueError("CLOB asset id mismatch")

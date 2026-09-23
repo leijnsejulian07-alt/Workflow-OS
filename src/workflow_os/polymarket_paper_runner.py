@@ -53,10 +53,13 @@ def _exit_open_positions(
             # Once order trading has ended there may be no executable bid book left.
             # For paper accounting, settle only an unambiguous terminal contract value;
             # any non-terminal closed state remains open/fail-closed for later evidence.
-            if market.closed and not market.active and market.yes_price in (0.0, 1.0):
-                store.close_yes(market_id=position.market_id, exit_price=market.yes_price)
-                exited_market_ids.add(position.market_id)
-                exited += 1
+            if market.closed and not market.active:
+                if market.yes_price in (0.0, 1.0):
+                    store.close_yes(market_id=position.market_id, exit_price=market.yes_price)
+                    exited_market_ids.add(position.market_id)
+                    exited += 1
+                else:
+                    held += 1
                 continue
             evidence = estimator(market)
             if not _valid_evidence(evidence, now_utc=now):

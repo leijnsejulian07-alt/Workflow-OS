@@ -26,13 +26,16 @@ def _exit_open_positions(
     estimator: FairProbabilityEstimator,
     policy: PolymarketPaperPolicy,
     now: datetime,
-) -> tuple[int, int]:
+) -> tuple[int, int, set[str]]:
     """Monitor durable paper positions and settle only against executable bid depth.
 
     External-data failures never invent a fill. They are recorded as fail-closed exit
     decisions where possible and leave the position open for a later bounded retry.
+    The returned market IDs are a cycle-local re-entry guard: a market deliberately
+    exited in this pass cannot immediately be reopened by the subsequent scan.
     """
     exited = held = 0
+    exited_market_ids: set[str] = set()
     for position in store.open_positions():
         if not position.yes_token_id:
             store.record_decision(position.market_id, should_exit(
@@ -67,12 +70,13 @@ def _exit_open_positions(
             shares = position.stake_usd / position.entry_price
             exit_price = estimate_sell_vwap(fetch_book(position.yes_token_id), shares=shares)
             store.close_yes(market_id=position.market_id, exit_price=exit_price)
+            exited_market_ids.add(position.market_id)
             exited += 1
         except (OSError, RuntimeError, TypeError, ValueError):
             # No synthetic settlement price: retain exposure until official market,
             # evidence and full executable bid depth can all be verified.
             held += 1
-    return exited, held
+    return exited, held, exited_market_ids
 
 
 def run_paper_cycle(*, store: PolymarketPaperStore, estimator: FairProbabilityEstimator, policy: PolymarketPaperPolicy = PolymarketPaperPolicy(), now_utc: datetime | None = None, market_limit: int = 100) -> PaperRunSummary:
@@ -85,7 +89,7 @@ def run_paper_cycle(*, store: PolymarketPaperStore, estimator: FairProbabilityEs
     if account.stopped:
         return PaperRunSummary(0, 0, 0, 0, True, account.stop_reason)
 
-    exited, exit_holds = _exit_open_positions(store=store, estimator=estimator, policy=policy, now=now)
+    exited, exit_holds, exited_market_ids = _exit_open_positions(store=store, estimator=estimator, policy=policy, now=now)
     account = store.account()
 
     # Reserved stakes are not realized losses, so cash drawdown is checked only when
@@ -104,6 +108,11 @@ def run_paper_cycle(*, store: PolymarketPaperStore, estimator: FairProbabilityEs
     cash = store.account().bankroll_usd
     for result in results:
         store.record_decision(result.market_id, result.decision)
+        # An exit is an explicit decision based on fresh evidence. Do not let the
+        # scanner churn that same market back into exposure during this cycle.
+        if result.market_id in exited_market_ids:
+            held += 1
+            continue
         if result.decision.action != "PAPER_BUY_YES" or open_positions >= policy.maximum_open_positions:
             held += 1
             continue

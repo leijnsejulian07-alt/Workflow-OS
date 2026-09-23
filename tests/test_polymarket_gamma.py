@@ -1,8 +1,10 @@
+import json
 from datetime import timezone
 
 import pytest
 
-from workflow_os.polymarket_gamma import normalize_gamma_market
+from workflow_os import polymarket_gamma
+from workflow_os.polymarket_gamma import fetch_gamma_market, normalize_gamma_market
 
 
 def _raw(**overrides):
@@ -39,6 +41,56 @@ def test_maps_token_id_using_same_yes_outcome_index():
     ))
     assert market.yes_price == pytest.approx(0.62)
     assert market.yes_token_id == "yes-token"
+
+
+class _Response:
+    status = 200
+
+    def __init__(self, payload):
+        self._body = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self, _limit):
+        return self._body
+
+
+def test_fetch_exact_market_uses_id_endpoint(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(request, timeout):
+        seen["url"] = request.full_url
+        seen["timeout"] = timeout
+        return _Response(_raw())
+
+    monkeypatch.setattr(polymarket_gamma, "urlopen", fake_urlopen)
+    market = fetch_gamma_market(market_id="m-1", timeout_seconds=4)
+    assert seen == {"url": "https://gamma-api.polymarket.com/markets/m-1", "timeout": 4}
+    assert market.market_id == "m-1"
+    assert market.yes_token_id == "yes-token"
+
+
+def test_fetch_exact_market_rejects_identity_mismatch(monkeypatch):
+    monkeypatch.setattr(polymarket_gamma, "urlopen", lambda request, timeout: _Response(_raw(id="other")))
+    with pytest.raises(ValueError, match="identity mismatch"):
+        fetch_gamma_market(market_id="m-1")
+
+
+def test_fetch_exact_market_escapes_path_segment(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(request, timeout):
+        seen["url"] = request.full_url
+        return _Response(_raw(id="../m-1"))
+
+    monkeypatch.setattr(polymarket_gamma, "urlopen", fake_urlopen)
+    market = fetch_gamma_market(market_id="../m-1")
+    assert seen["url"].endswith("/%2E%2E%2Fm-1")
+    assert market.market_id == "../m-1"
 
 
 @pytest.mark.parametrize(

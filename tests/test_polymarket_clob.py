@@ -38,6 +38,23 @@ def test_invalid_orderbook_levels_fail_closed(level):
         normalize_book(_book(bids=[level]), expected_token_id="yes-token")
 
 
+@pytest.mark.parametrize("raw", [None, [], "bad", 1, True])
+def test_non_object_orderbook_response_fails_closed(raw):
+    with pytest.raises(ValueError, match="orderbook response must be an object"):
+        normalize_book(raw, expected_token_id="yes-token")
+
+
+@pytest.mark.parametrize("token_id", [None, "", "   ", True, 1])
+def test_invalid_expected_token_id_fails_closed(token_id):
+    with pytest.raises(ValueError, match="expected_token_id required"):
+        normalize_book(_book(), expected_token_id=token_id)
+
+
+def test_expected_token_id_is_trimmed_before_exact_match():
+    book = normalize_book(_book(), expected_token_id="  yes-token  ")
+    assert book.asset_id == "yes-token"
+
+
 def test_small_order_has_zero_price_impact_at_best_ask():
     book = normalize_book(_book(), expected_token_id="yes-token")
     assert estimate_buy_slippage(book, stake_usd=3.0) == pytest.approx(0.0)

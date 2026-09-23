@@ -105,6 +105,33 @@ def test_runner_exits_against_full_bid_depth(monkeypatch, tmp_path):
     assert store.account().bankroll_usd == 50.4
 
 
+def test_runner_does_not_reopen_market_exited_in_same_cycle(monkeypatch, tmp_path):
+    store = PolymarketPaperStore(tmp_path / "paper.db", starting_bankroll_usd=50.0)
+    now = datetime(2026, 9, 21, 18, 0, tzinfo=timezone.utc)
+    store.open_yes(market_id="m1", stake_usd=3.0, entry_price=0.60, entry_fair_probability=0.75, opened_at=now - timedelta(hours=2), yes_token_id="yes-token-1")
+    market = GammaMarket("m1", "Question?", 0.70, "yes-token-1", 10_000.0, now + timedelta(minutes=30), "official", True, False, True)
+    reentry_signal = PaperScanResult(
+        market_id="m1",
+        question="Question?",
+        decision=PolymarketPaperDecision("PAPER_BUY_YES", "GUIDE_SIGNAL", 3.0, 12.0),
+        market_price=0.70,
+        fair_probability=0.82,
+        yes_token_id="yes-token-1",
+    )
+    monkeypatch.setattr("workflow_os.polymarket_paper_runner.fetch_gamma_market", lambda **_: market)
+    monkeypatch.setattr("workflow_os.polymarket_paper_runner.fetch_book", lambda *_: ClobBook("yes-token-1", (BookLevel(0.68, 10.0),), ()))
+    monkeypatch.setattr("workflow_os.polymarket_paper_runner.scan_paper_markets", lambda **_: [reentry_signal])
+    estimator = lambda _: FairProbabilityEvidence(0.82, "test", now)
+
+    summary = run_paper_cycle(store=store, estimator=estimator, now_utc=now)
+
+    assert summary.exited == 1
+    assert summary.opened == 0
+    assert summary.held == 1
+    assert store.open_count() == 0
+    assert store.account().bankroll_usd == 50.4
+
+
 def test_runner_never_invents_exit_when_bid_depth_is_insufficient(monkeypatch, tmp_path):
     store = PolymarketPaperStore(tmp_path / "paper.db", starting_bankroll_usd=50.0)
     now = datetime(2026, 9, 21, 18, 0, tzinfo=timezone.utc)

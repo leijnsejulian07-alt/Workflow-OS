@@ -49,6 +49,13 @@ def test_insufficient_depth_fails_closed():
         estimate_buy_slippage(book, stake_usd=10.0)
 
 
+@pytest.mark.parametrize("stake_usd", [0, -1, float("nan"), float("inf"), True])
+def test_buy_slippage_rejects_invalid_stake(stake_usd):
+    book = normalize_book(_book(), expected_token_id="yes-token")
+    with pytest.raises(ValueError, match="positive finite stake"):
+        estimate_buy_slippage(book, stake_usd=stake_usd)
+
+
 def test_asset_mismatch_fails_closed():
     with pytest.raises(ValueError, match="mismatch"):
         normalize_book(_book(asset_id="different"), expected_token_id="yes-token")

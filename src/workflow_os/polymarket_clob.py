@@ -70,9 +70,10 @@ def fetch_book(token_id: str, *, timeout_seconds: float = 10.0) -> ClobBook:
 
 def estimate_buy_slippage(book: ClobBook, *, stake_usd: float) -> float:
     """Estimate market-buy price impact vs best ask. Insufficient depth fails closed."""
-    if stake_usd <= 0 or not book.asks:
-        raise ValueError("positive stake and asks required")
-    remaining = stake_usd
+    if (not isinstance(stake_usd, (int, float)) or isinstance(stake_usd, bool)
+            or not math.isfinite(float(stake_usd)) or stake_usd <= 0 or not book.asks):
+        raise ValueError("positive finite stake and asks required")
+    remaining = float(stake_usd)
     shares = 0.0
     spent = 0.0
     for level in book.asks:
@@ -86,7 +87,10 @@ def estimate_buy_slippage(book: ClobBook, *, stake_usd: float) -> float:
     if remaining > 1e-9 or shares <= 0:
         raise ValueError("insufficient ask depth")
     average_price = spent / shares
-    return max(0.0, average_price / book.asks[0].price - 1.0)
+    slippage = average_price / book.asks[0].price - 1.0
+    if not math.isfinite(slippage):
+        raise ValueError("invalid buy slippage")
+    return max(0.0, slippage)
 
 
 def estimate_sell_vwap(book: ClobBook, *, shares: float) -> float:

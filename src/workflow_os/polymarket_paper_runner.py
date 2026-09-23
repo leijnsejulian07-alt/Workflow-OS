@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from .polymarket_paper import PolymarketPaperPolicy, drawdown_decision
+from .polymarket_clob import estimate_sell_vwap, fetch_book
+from .polymarket_gamma import fetch_gamma_market
+from .polymarket_paper import PolymarketPaperPolicy, drawdown_decision, should_exit
 from .polymarket_paper_state import PolymarketPaperStore
-from .polymarket_scanner import FairProbabilityEstimator, scan_paper_markets
+from .polymarket_scanner import FairProbabilityEstimator, _valid_evidence, scan_paper_markets
 
 
 @dataclass(frozen=True)
@@ -13,18 +15,78 @@ class PaperRunSummary:
     scanned: int
     opened: int
     held: int
+    exited: int
     stopped: bool
     stop_reason: str | None
 
 
+def _exit_open_positions(
+    *,
+    store: PolymarketPaperStore,
+    estimator: FairProbabilityEstimator,
+    policy: PolymarketPaperPolicy,
+    now: datetime,
+) -> tuple[int, int]:
+    """Monitor durable paper positions and settle only against executable bid depth.
+
+    External-data failures never invent a fill. They are recorded as fail-closed exit
+    decisions where possible and leave the position open for a later bounded retry.
+    """
+    exited = held = 0
+    for position in store.open_positions():
+        if not position.yes_token_id:
+            store.record_decision(position.market_id, should_exit(
+                entry_fair_probability=position.entry_fair_probability,
+                current_fair_probability=float("nan"),
+                hours_to_resolution=float("nan"),
+                mispricing_closed=False,
+                policy=policy,
+            ))
+            held += 1
+            continue
+        try:
+            market = fetch_gamma_market(market_id=position.market_id)
+            if market.yes_token_id != position.yes_token_id:
+                raise ValueError("durable YES token identity mismatch")
+            evidence = estimator(market)
+            if not _valid_evidence(evidence, now_utc=now):
+                raise ValueError("missing or stale fair-value evidence")
+            hours_left = (market.resolves_at.astimezone(timezone.utc) - now).total_seconds() / 3600.0
+            mispricing_closed = evidence.probability - market.yes_price <= policy.minimum_edge_points / 100.0
+            decision = should_exit(
+                entry_fair_probability=position.entry_fair_probability,
+                current_fair_probability=evidence.probability,
+                hours_to_resolution=hours_left,
+                mispricing_closed=mispricing_closed,
+                policy=policy,
+            )
+            store.record_decision(position.market_id, decision)
+            if decision.action != "PAPER_EXIT":
+                held += 1
+                continue
+            shares = position.stake_usd / position.entry_price
+            exit_price = estimate_sell_vwap(fetch_book(position.yes_token_id), shares=shares)
+            store.close_yes(market_id=position.market_id, exit_price=exit_price)
+            exited += 1
+        except (OSError, RuntimeError, TypeError, ValueError):
+            # No synthetic settlement price: retain exposure until official market,
+            # evidence and full executable bid depth can all be verified.
+            held += 1
+    return exited, held
+
+
 def run_paper_cycle(*, store: PolymarketPaperStore, estimator: FairProbabilityEstimator, policy: PolymarketPaperPolicy = PolymarketPaperPolicy(), now_utc: datetime | None = None, market_limit: int = 100) -> PaperRunSummary:
-    """Run one durable paper-only scan cycle; live execution is unreachable."""
+    """Run one durable paper-only monitor + scan cycle; live execution is unreachable."""
     now = now_utc or datetime.now(timezone.utc)
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("now_utc must be timezone-aware")
+    now = now.astimezone(timezone.utc)
     account = store.account()
     if account.stopped:
-        return PaperRunSummary(0, 0, 0, True, account.stop_reason)
+        return PaperRunSummary(0, 0, 0, 0, True, account.stop_reason)
+
+    exited, exit_holds = _exit_open_positions(store=store, estimator=estimator, policy=policy, now=now)
+    account = store.account()
 
     # Reserved stakes are not realized losses, so cash drawdown is checked only when
     # no positions are open. Mark-to-market equity can replace this once exit marking
@@ -33,10 +95,11 @@ def run_paper_cycle(*, store: PolymarketPaperStore, estimator: FairProbabilityEs
         dd = drawdown_decision(bankroll_usd=account.bankroll_usd, peak_bankroll_usd=account.peak_bankroll_usd, policy=policy)
         if dd.action == "STOP":
             store.stop(dd.reason)
-            return PaperRunSummary(0, 0, 0, True, dd.reason)
+            return PaperRunSummary(0, 0, exit_holds, exited, True, dd.reason)
 
     results = scan_paper_markets(estimator=estimator, bankroll_usd=account.bankroll_usd, open_positions=store.open_count(), policy=policy, now_utc=now, market_limit=market_limit)
-    opened = held = 0
+    opened = 0
+    held = exit_holds
     open_positions = store.open_count()
     cash = store.account().bankroll_usd
     for result in results:
@@ -71,4 +134,4 @@ def run_paper_cycle(*, store: PolymarketPaperStore, estimator: FairProbabilityEs
         cash -= stake
         open_positions += 1
         opened += 1
-    return PaperRunSummary(len(results), opened, held, False, None)
+    return PaperRunSummary(len(results), opened, held, exited, False, None)

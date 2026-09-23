@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 GAMMA_MARKETS_URL = "https://gamma-api.polymarket.com/markets"
+_MARKET_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 @dataclass(frozen=True)
@@ -101,11 +103,9 @@ def _read_gamma_json(url: str, *, timeout_seconds: float) -> Any:
 def fetch_gamma_market(*, market_id: str, timeout_seconds: float = 10.0) -> GammaMarket:
     """Fetch one market by exact Gamma id for restart-safe position monitoring."""
     clean_id = str(market_id).strip()
-    if not clean_id or len(clean_id) > 128:
-        raise ValueError("market_id must be non-empty and at most 128 characters")
-    payload = _read_gamma_json(
-        f"{GAMMA_MARKETS_URL}/{quote(clean_id, safe='')}", timeout_seconds=timeout_seconds
-    )
+    if _MARKET_ID_RE.fullmatch(clean_id) is None:
+        raise ValueError("market_id contains unsupported characters")
+    payload = _read_gamma_json(f"{GAMMA_MARKETS_URL}/{clean_id}", timeout_seconds=timeout_seconds)
     if not isinstance(payload, dict):
         raise ValueError("Gamma market response must be an object")
     market = normalize_gamma_market(payload)

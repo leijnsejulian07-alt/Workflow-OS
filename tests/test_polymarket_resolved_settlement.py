@@ -90,3 +90,46 @@ def test_runner_holds_ambiguous_closed_market(monkeypatch, tmp_path):
     assert summary.held == 1
     assert store.open_count() == 1
     assert store.account().bankroll_usd == pytest.approx(47.0)
+
+
+@pytest.mark.parametrize(
+    ("active", "closed"),
+    [(True, True), (False, False)],
+)
+def test_runner_holds_conflicting_nontradable_flags_without_estimator_or_clob(
+    monkeypatch, tmp_path, active, closed
+):
+    store = PolymarketPaperStore(tmp_path / "paper.db", starting_bankroll_usd=50.0)
+    now = datetime(2026, 9, 23, 8, 0, tzinfo=timezone.utc)
+    store.open_yes(
+        market_id="m1",
+        stake_usd=3.0,
+        entry_price=0.60,
+        entry_fair_probability=0.75,
+        opened_at=now - timedelta(days=1),
+        yes_token_id="yes-token-1",
+    )
+    inconsistent = GammaMarket(
+        "m1", "Question?", 0.5, "yes-token-1", 0.0,
+        now - timedelta(hours=1), "official", active, closed, False,
+    )
+    monkeypatch.setattr(
+        "workflow_os.polymarket_paper_runner.fetch_gamma_market", lambda **_: inconsistent
+    )
+    monkeypatch.setattr(
+        "workflow_os.polymarket_paper_runner.fetch_book",
+        lambda *_: (_ for _ in ()).throw(AssertionError("non-tradable market must not use CLOB")),
+    )
+    monkeypatch.setattr(
+        "workflow_os.polymarket_paper_runner.scan_paper_markets", lambda **_: []
+    )
+
+    def forbidden_estimator(_):
+        raise AssertionError("non-tradable market must not be re-valued as tradable")
+
+    summary = run_paper_cycle(store=store, estimator=forbidden_estimator, now_utc=now)
+
+    assert summary.exited == 0
+    assert summary.held == 1
+    assert store.open_count() == 1
+    assert store.account().bankroll_usd == pytest.approx(47.0)

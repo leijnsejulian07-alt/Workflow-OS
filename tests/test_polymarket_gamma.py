@@ -80,17 +80,18 @@ def test_fetch_exact_market_rejects_identity_mismatch(monkeypatch):
         fetch_gamma_market(market_id="m-1")
 
 
-def test_fetch_exact_market_escapes_path_segment(monkeypatch):
-    seen = {}
+def test_fetch_exact_market_rejects_unsafe_path_id_before_network(monkeypatch):
+    called = False
 
     def fake_urlopen(request, timeout):
-        seen["url"] = request.full_url
-        return _Response(_raw(id="../m-1"))
+        nonlocal called
+        called = True
+        return _Response(_raw())
 
     monkeypatch.setattr(polymarket_gamma, "urlopen", fake_urlopen)
-    market = fetch_gamma_market(market_id="../m-1")
-    assert seen["url"].endswith("/%2E%2E%2Fm-1")
-    assert market.market_id == "../m-1"
+    with pytest.raises(ValueError, match="unsupported characters"):
+        fetch_gamma_market(market_id="../m-1")
+    assert called is False
 
 
 @pytest.mark.parametrize(

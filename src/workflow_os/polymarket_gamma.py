@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -56,7 +57,10 @@ def normalize_gamma_market(raw: dict[str, Any]) -> GammaMarket:
     yes_index = outcomes.index("Yes")
     yes_price = float(prices[yes_index])
     yes_token_id = str(token_ids[yes_index]).strip()
-    if not 0.0 < yes_price < 1.0:
+    # Exact-market monitoring must remain able to read resolved contracts whose
+    # terminal YES value is legitimately 0 or 1. Discovery still filters to active,
+    # open, order-accepting markets before any entry can be considered.
+    if not math.isfinite(yes_price) or not 0.0 <= yes_price <= 1.0:
         raise ValueError("invalid YES price")
     if not yes_token_id:
         raise ValueError("missing YES CLOB token id")

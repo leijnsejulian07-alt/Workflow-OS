@@ -38,6 +38,7 @@ from workflow_os.adapters.whop_bounty_http_transport import WhopBountyHttpTransp
 from workflow_os.credentials import CredentialLease, CredentialRef
 from workflow_os.durable_whop_bounty_binding import DurableWhopBountyBindingLedger
 from workflow_os.job_queue import JobQueue
+from workflow_os.offline_run_lock import exclusive_paper_run_lock
 from workflow_os.openshorts_output_provenance import (
     OpenShortsClipOutput, OpenShortsOutputProvenanceStore,
 )
@@ -317,8 +318,11 @@ def _clean_subprocess_env() -> dict[str, str]:
 
 
 def _run_all(output_dir: Path) -> dict[str, object]:
-    base = output_dir.expanduser().resolve()
-    base.mkdir(parents=True, exist_ok=True)
+    with exclusive_paper_run_lock(output_dir) as base:
+        return _run_locked(base)
+
+
+def _run_locked(base: Path) -> dict[str, object]:
     run_dir = base / ("paper-" + secrets.token_hex(8))
     run_dir.mkdir(mode=0o700)  # collision fails closed; never overwrite other runs
     steps: list[dict[str, object]] = []

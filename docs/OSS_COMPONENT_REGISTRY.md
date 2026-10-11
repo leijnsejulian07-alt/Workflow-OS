@@ -1,5 +1,9 @@
 # OSS Component Registry
 
+> **Language:** English · [Nederlands / Nederlandse vertaling](OSS_COMPONENT_REGISTRY.nl.md)
+>
+> This is the existing canonical policy/technical source. Translations do not alter interface identifiers, safety checks, licenses or implementation authority.
+
 This registry is the evidence gate for third-party components considered by Workflow OS. A registry entry is not permission to install or deploy a component. Versions/commits must be pinned and reviewed before integration.
 
 ## Decision labels

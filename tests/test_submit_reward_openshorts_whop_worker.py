@@ -15,6 +15,7 @@ from workflow_os.job_queue import JobQueue
 from workflow_os.openshorts_output_provenance import OpenShortsClipOutput, OpenShortsOutputProvenanceStore
 from workflow_os.openshorts_output_qc import OpenShortsOutputQCEvidence
 from workflow_os.side_effects import SideEffectLedger
+from workflow_os.sqlite_lifecycle import managed_connection
 from workflow_os.submit_reward_openshorts_whop_worker import run_submit_reward_openshorts_whop_once
 from workflow_os.whop_bounty_submission_provenance import WhopBountySubmissionProvenanceLedger
 
@@ -86,7 +87,7 @@ class SubmitRewardOpenShortsWhopWorkerTests(unittest.TestCase):
     def tearDown(self): self.tmp.cleanup()
 
     def _job(self, job_id):
-        with sqlite3.connect(self.db) as db:
+        with managed_connection(sqlite3.connect(self.db)) as db:
             row = db.execute(
                 "SELECT state, attempt_count FROM jobs WHERE job_id=?",
                 (job_id,),

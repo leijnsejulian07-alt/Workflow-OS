@@ -4,7 +4,7 @@
 >
 > **Vertaling ter uitleg.** De Engelse beleidsbron en uitvoerbare validatie blijven leidend totdat vertaalde teksten expliciet als equivalente norm zijn gecontroleerd. **Codes en logische regels worden niet vertaald.**
 
-Dit beleid bepaalt de deterministische, **fail-closed** controle tussen een gestandaardiseerd \`OpportunityContract\` en planning/productie. AI mag gegevens helpen uitlezen of schatten, maar mag een afgekeurde harde controle **nooit** overrulen.
+Dit beleid bepaalt de deterministische, **fail-closed** controle tussen een gestandaardiseerd `OpportunityContract` en planning/productie. AI mag gegevens helpen uitlezen of schatten, maar mag een afgekeurde harde controle **nooit** overrulen.
 
 ## Volgorde van beslissingen
 
@@ -47,7 +47,7 @@ Alleen kansen die alle harde controles doorstaan, krijgen een wachtrijscore. Dez
 
 Voorgestelde genormaliseerde formule (**technische variabelen exact behouden**):
 
-\`priority = 100 * clamp(0,1, 0.30*profit + 0.20*collectibility + 0.15*time_to_cash + 0.15*profit_per_laptop_hour + 0.10*automation - 0.05*risk - 0.03*capital - 0.02*owner_attention)\`
+`priority = 100 * clamp(0,1, 0.30*profit + 0.20*collectibility + 0.15*time_to_cash + 0.15*profit_per_laptop_hour + 0.10*automation - 0.05*risk - 0.03*capital - 0.02*owner_attention)`
 
 Ieder onderdeel moet eerst via een gedocumenteerde, versiebeheerbare functie worden genormaliseerd. Zolang die functies ontbreken, moeten de componentwaarden worden opgeslagen en moet **REVALIDATE** worden teruggegeven. Verzin geen score.
 
@@ -65,6 +65,6 @@ Uitsluitend wettelijk of door platforms vereiste KYC/accountinstellingen, risico
 
 ## Vereisten voor auditregistratie
 
-Ieder besluit registreert beleidsversie, beoordelingsmoment, bron- en actualiteitsbewijs, resultaten van harde controles, financiële gegevens, scorecomponenten, eindbesluit en redenen, eventuele aanleiding voor eigenaarstussenkomst en versie/hash van het \`OpportunityContract\`.
+Ieder besluit registreert beleidsversie, beoordelingsmoment, bron- en actualiteitsbewijs, resultaten van harde controles, financiële gegevens, scorecomponenten, eindbesluit en redenen, eventuele aanleiding voor eigenaarstussenkomst en versie/hash van het `OpportunityContract`.
 
 Een beleidswijziging past historische besluiten **niet met terugwerkende kracht** aan; herbeoordeling maakt een nieuw besluit.

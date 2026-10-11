@@ -35,11 +35,11 @@ Iedere onomkeerbare of extern zichtbare actie doorloopt **vlak voor uitvoering**
 7. De vereiste goedkeuring door de eigenaar is aanwezig.
 8. De idempotente sleutel voor de externe actie is ongebruikt of veilig hervatbaar.
 
-Verouderde vlaggen zoals \`auto_publish\`, \`READY\`, \`PENDING\` of \`rights=yes\` geven **nooit** bevoegdheid.
+Verouderde vlaggen zoals `auto_publish`, `READY`, `PENDING` of `rights=yes` geven **nooit** bevoegdheid.
 
 ## Beleid voor computerbronnen
 
-- Gelijktijdigheid van lokaal \`HEAVY_RENDER\` staat standaard op **1**.
+- Gelijktijdigheid van lokaal `HEAVY_RENDER` staat standaard op **1**.
 - Nieuwe zware taken worden geblokkeerd bij schaarste aan schijfruimte, RAM of CPU.
 - De planning draait primair om verwachte inbare nettowinst per schaars middel, gecorrigeerd voor tijd tot betaling, zekerheid, risico, deadline en eigenaarstijd.
 - Werk zonder geloofwaardig inkomstenbewijs wordt automatisch gepauzeerd of gestopt na begrensde experiment- en herstelbudgetten.

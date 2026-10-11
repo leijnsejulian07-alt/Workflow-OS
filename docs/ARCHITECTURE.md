@@ -1,5 +1,9 @@
 # Workflow OS Architecture
 
+> **Language:** English · [Nederlands / Nederlandse vertaling](ARCHITECTURE.nl.md)
+>
+> This is the existing canonical policy/technical source. Translations do not alter interface identifiers, safety checks, licenses or implementation authority.
+
 ## Control plane
 
 Workflow HQ is the canonical state authority. n8n performs integration/orchestration work but does not own commercial truth, rights truth, settlement truth, or privileged side-effect authority.

@@ -1,5 +1,9 @@
 # Workflow OS Production Policy
 
+> **Language:** English · [Nederlands / Nederlandse vertaling](production-policy.nl.md)
+>
+> This is the existing canonical policy/technical source. Translations do not alter interface identifiers, safety checks, licenses or implementation authority.
+
 ## Owner boundary
 
 The owner is never assigned recurring operational work. Owner attention is permitted only for strategy/control, legally or platform-required KYC/account setup, high-risk spending/contracts, true exceptions after automated recovery is exhausted, and emergency shutdown.

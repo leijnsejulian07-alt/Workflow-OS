@@ -11,7 +11,7 @@ Workflow HQ is de gezaghebbende bron voor de systeemstatus. n8n voert integratie
 ## Geïntegreerde procesketen
 
 1. Platform- en bronadapters vinden legitieme inkomstenmogelijkheden.
-2. De Opportunity Manager zet deze om naar het canonieke \`OpportunityContract\`.
+2. De Opportunity Manager zet deze om naar het canonieke `OpportunityContract`.
 3. Controles op duplicaten/conflicten, rechten, naleving van regels, accounts, actualiteit, financiële haalbaarheid en benodigde aandacht van de eigenaar worden uitgevoerd.
 4. De planner rangschikt geschikte opdrachten op verwachte **daadwerkelijk inbare** winst, tijd tot betaling, automatiseringsgraad, operationeel/platformrisico, kapitaalbehoefte, computerkosten, deadline en benodigde eigenaarstijd.
 5. De Resource Governor verstrekt een uitvoeringsrecht (lease). Standaard draait maximaal één zware lokale rendertaak tegelijk.
@@ -39,7 +39,7 @@ Gestandaardiseerde, bij voorkeur statische bedrijfs- of dienstverleningswebsites
 
 **Technische levenscyclus (statusnamen niet vertalen):**
 
-\`OPT_IN_LEAD -> QUALIFIED -> SCOPE_LOCKED -> PREVIEW_GENERATED -> QA_PASSED -> PAYMENT_PENDING -> PAID -> DEPLOYMENT_AUTHORIZED -> DEPLOYING -> VERIFIED_LIVE -> HANDOVER_DELIVERED -> CLOSED\`
+`OPT_IN_LEAD -> QUALIFIED -> SCOPE_LOCKED -> PREVIEW_GENERATED -> QA_PASSED -> PAYMENT_PENDING -> PAID -> DEPLOYMENT_AUTHORIZED -> DEPLOYING -> VERIFIED_LIVE -> HANDOVER_DELIVERED -> CLOSED`
 
 Ondersteuning buiten de afgesproken opdracht wordt een **nieuwe betaalde mogelijkheid**, geen doorlopende onderhoudsverplichting.
 

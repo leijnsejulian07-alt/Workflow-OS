@@ -1,5 +1,9 @@
 # Opportunity Decision Policy
 
+> **Language:** English · [Nederlands / Nederlandse vertaling](opportunity-decision-policy.nl.md)
+>
+> This is the existing canonical policy/technical source. Translations do not alter interface identifiers, safety checks, licenses or implementation authority.
+
 This policy defines the deterministic, fail-closed gate between a normalized OpportunityContract and scheduling/production. AI may help extract or estimate inputs, but it may not override a failed hard gate.
 
 ## Decision order

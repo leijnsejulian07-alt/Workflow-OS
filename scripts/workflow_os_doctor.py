@@ -19,7 +19,6 @@ import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote
 
 
 _EXPECTED_PHASES = (
@@ -144,7 +143,8 @@ def inspect_paper_evidence(run_dir: Path | None) -> dict[str, object]:
             and events[4].get("http_calls") == 1
             and events[5].get("http_calls") == 0
         )
-        with _open_read_only(db_file) as db:
+        db = _open_read_only(db_file)
+        try:
             actual_jobs = {
                 str(k): (str(state), int(attempts))
                 for k, state, attempts in db.execute(
@@ -154,6 +154,8 @@ def inspect_paper_evidence(run_dir: Path | None) -> dict[str, object]:
             effects = Counter(str(state) for (state,) in db.execute(
                 "SELECT state FROM side_effects"
             ))
+        finally:
+            db.close()
         passed = (
             valid_header and valid_events
             and actual_jobs == _EXPECTED_PAPER_JOBS

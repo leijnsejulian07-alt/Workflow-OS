@@ -23,6 +23,23 @@ Workflow OS is een centraal, grotendeels autonoom AI-platform om **legitieme onl
 
 **Commercieel doel:** richting **€ 10.000 bruto omzet per maand in december 2026**. Dit is een ambitieuze doelstelling, geen prognose of garantie. Werkelijke, aantoonbaar ontvangen inkomsten zijn belangrijker dan views, theoretische opbrengsten of schattingen.
 
+## Starten en controleren (werkende offline opdrachten)
+
+**Vereisten:** Python 3.12 of nieuwer; voor deze veilige opdrachten zijn geen externe accounts of API-sleutels nodig.
+
+Voer uit vanuit de hoofdmap van de repository:
+
+```powershell
+python scripts/run_workflow_os_paper_acceptance.py --output-dir .\paper-evidence
+python scripts/workflow_os_doctor.py --paper-run-dir "MAP-DIE-DE-TEST-TOONT"
+```
+
+Het eerste commando test de **bestaande** OpenShorts→Whop-worker in **zeven afzonderlijke Python-processen**. Het gebruikt gesimuleerde mediacontroles, nepcredentials en een in-memory HTTP-vervanger die **geen echte Whop-inzendingen kan doen**. Het bewaart SQLite-gegevens, `events.jsonl`-logregels en een `summary.json` in een nieuwe unieke map. Herstel na een lokale fout, voorkoming van duplicaten, blokkeren van onzekere uitkomsten en persistentie na een procesherstart worden gecontroleerd. Een door het besturingssysteem beheerde lock voorkomt gelijktijdige runs en wordt bij een crash automatisch vrijgegeven; het lockbestand blijft bestaan.
+
+De doctor past een bestaande SQLite-database **niet** aan, verstuurt niets naar platforms en print geen credentialwaarden. Met `--state-db` kun je een **bevoegde** Workflow OS-database uitsluitend lezen om aantallen taken, onzekere acties en verlopen leases te controleren. Met `--paper-run-dir` verifieer je het bewijs van één volledige synthetische test. `--output` maakt optioneel een **nieuw** opgeschoond JSON-rapport zonder eerder bewijs te overschrijven.
+
+**Belangrijk:** dit zijn uitgevoerde offline softwaretests, **geen echte inkomsten of bewezen autonome achtergrondwerking**. De meldingen blijven `TEST_MODE_READY: NO` en `LIVE_MODE_READY: NO` totdat de toegestane Windows-machine, de planning, accounts, toestemming voor externe acties en betaalreconciliatie afzonderlijk zijn bewezen. Gebruik nooit echte secrets in een synthetische test. Installatie op de runtimecomputer moet apart plaatsvinden.
+
 ## Uitgangspunt: zo min mogelijk handwerk
 
 De eigenaar houdt toezicht op strategie, eenmalige accountinstellingen/KYC, noodzakelijke goedkeuringen en echte uitzonderingen. Workflow OS moet dagelijkse werkzaamheden, leveringen en herstelacties zelf kunnen uitvoeren waar dit wettelijk, technisch en contractueel is toegestaan.

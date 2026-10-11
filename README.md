@@ -20,6 +20,23 @@ Workflow OS is a zero-touch autonomous revenue control plane for legitimate n8n/
 
 **Localization rule for future changes:** add or update both language versions in the same PR. Preserve exact technical names, policy constants, formulas, safety gates, license notices and source citations; do not silently reinterpret operational requirements. For new machine-readable files, explain them in bilingual docs instead of translating keys or wire formats.
 
+## Run and diagnose (working offline commands)
+
+**Prerequisites:** Python 3.12+; no external service accounts or API keys are needed for these two safe commands.
+
+From the repository root:
+
+```powershell
+python scripts/run_workflow_os_paper_acceptance.py --output-dir .\paper-evidence
+python scripts/workflow_os_doctor.py --paper-run-dir "PATH-PRINTED-BY-ACCEPTANCE"
+```
+
+The acceptance command exercises the **existing** OpenShorts→Whop worker across **seven separate Python processes**. It uses synthetic media-quality evidence, mock credentials and a fake in-memory HTTP opener that **cannot submit to Whop**. It saves independent SQLite state, durable `events.jsonl` records and a `summary.json` file under a new unique run directory. Safe retry after local failure, duplicate prevention, ambiguous outcome blocking, and restart persistence are asserted. A cross-platform OS-held lock prevents overlapping acceptance runs; the lock is automatically released on crash, without deleting the lock file.
+
+The doctor never writes to an existing SQLite database, makes platform calls or prints credential values. Optional `--state-db` opens a real **authorized** Workflow OS state database read-only to report job/effect counts, unknown outcomes and expired leases; `--paper-run-dir` independently checks a completed synthetic acceptance artifact. Optional `--output` writes a **new** sanitized JSON report without overwriting existing evidence.
+
+**Important:** This is actual code and tested offline execution, **not live revenue or proven unattended operation**. Its honest readiness indicators stay `TEST_MODE_READY: NO` and `LIVE_MODE_READY: NO` until the authorized Windows runtime, scheduling, account requirements, side-effect permissions and reconciliation evidence are separately verified. Never attach real secrets to a synthetic run. Runtime device installation remains a separate task.
+
 ## Mission
 
 Build a unified system that discovers, evaluates, produces, publishes/deploys where explicitly authorized, reconciles revenue, and automatically keeps/scales/pauses/kills work based on collectible profit.

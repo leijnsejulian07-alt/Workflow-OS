@@ -5,6 +5,21 @@
 
 Workflow OS is a zero-touch autonomous revenue control plane for legitimate n8n/AI income workflows.
 
+## Documentation in English and Dutch
+
+**Every human-readable project document has an English and a Dutch counterpart.** Technical source code, test names, JSON Schema field names, environment variables, API contracts and CI configuration remain in their canonical machine-compatible form; translating these identifiers would break integrations and is **not** part of documentation localization.
+
+| English | Nederlands |
+| --- | --- |
+| [README.md](README.md) | [LEESME.md](LEESME.md) |
+| [Architecture](docs/ARCHITECTURE.md) | [Architectuur](docs/ARCHITECTURE.nl.md) |
+| [Open-source component registry](docs/OSS_COMPONENT_REGISTRY.md) | [Open-sourcecomponentenregister](docs/OSS_COMPONENT_REGISTRY.nl.md) |
+| [Opportunity decision policy](policies/opportunity-decision-policy.md) | [Beleid voor kansbesluiten](policies/opportunity-decision-policy.nl.md) |
+| [Production policy](policies/production-policy.md) | [Productiebeleid](policies/production-policy.nl.md) |
+| [Schema reference](docs/SCHEMAS.md) | [Schemareferentie](docs/SCHEMAS.nl.md) |
+
+**Localization rule for future changes:** add or update both language versions in the same PR. Preserve exact technical names, policy constants, formulas, safety gates, license notices and source citations; do not silently reinterpret operational requirements. For new machine-readable files, explain them in bilingual docs instead of translating keys or wire formats.
+
 ## Mission
 
 Build a unified system that discovers, evaluates, produces, publishes/deploys where explicitly authorized, reconciles revenue, and automatically keeps/scales/pauses/kills work based on collectible profit.

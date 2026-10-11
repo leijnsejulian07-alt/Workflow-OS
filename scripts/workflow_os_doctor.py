@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only Workflow OS runtime diagnostics, without requiring provider credentials.
+r"""Read-only Workflow OS runtime diagnostics, without requiring provider credentials.
 
 Usage:
     python scripts/workflow_os_doctor.py

@@ -40,7 +40,8 @@ def exclusive_paper_run_lock(parent: str | Path) -> Iterator[Path]:
     The file remains in place after the run. Do not manually remove it while a
     process might be using it. A crashed process loses the kernel lock.
     """
-    root = Path(parent).expanduser().resolve()
+    supplied = Path(parent).expanduser().absolute()
+    root = supplied.resolve()  # canonical file identity prevents alias lock bypass
     root.mkdir(parents=True, exist_ok=True)
     path = root / ".workflow-os-paper.lock"
     fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o600)
@@ -55,7 +56,7 @@ def exclusive_paper_run_lock(parent: str | Path) -> Iterator[Path]:
         except (OSError, BlockingIOError) as exc:
             raise RuntimeError("another offline paper run is active; overlap denied") from exc
         locked = True
-        yield root
+        yield supplied  # preserve caller's absolute Windows 8.3 path alias
     finally:
         if locked:
             _unlock(stream)

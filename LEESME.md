@@ -40,6 +40,14 @@ De doctor past een bestaande SQLite-database **niet** aan, verstuurt niets naar 
 
 **Belangrijk:** dit zijn uitgevoerde offline softwaretests, **geen echte inkomsten of bewezen autonome achtergrondwerking**. De meldingen blijven `TEST_MODE_READY: NO` en `LIVE_MODE_READY: NO` totdat de toegestane Windows-machine, de planning, accounts, toestemming voor externe acties en betaalreconciliatie afzonderlijk zijn bewezen. Gebruik nooit echte secrets in een synthetische test. Installatie op de runtimecomputer moet apart plaatsvinden.
 
+### Duurzame offline Windows-runner
+
+```powershell
+python scripts/workflow_os_offline_windows_runner.py
+```
+
+Deze opdracht start uitsluitend de **synthetische** acceptatietest met zeven processen. Een OS-lock voorkomt overlap; `%LOCALAPPDATA%\WorkflowOS\offline-paper\runs.jsonl` bewaart `STARTED`/`PASS`/`FAIL`/`INTERRUPTED` en bij de volgende start wordt een onderbroken vorige uitvoering vastgelegd. SQLite-bewijs wordt onafhankelijk gecontroleerd en omgevingsvariabelen met providercredentials worden niet doorgegeven. De runner roteert twee begrensde auditlogs van 2 MiB en stopt veilig bij 512 MiB bewijs, zonder bewijs automatisch te verwijderen. Een geslaagde handmatige test bewijst **niet** dat Windows Taakplanner is ingesteld, uitvoering zonder ingelogde gebruiker werkt of dat er echte inzendingen of inkomsten zijn. Deze opdracht installeert geen geplande taak.
+
 ## Uitgangspunt: zo min mogelijk handwerk
 
 De eigenaar houdt toezicht op strategie, eenmalige accountinstellingen/KYC, noodzakelijke goedkeuringen en echte uitzonderingen. Workflow OS moet dagelijkse werkzaamheden, leveringen en herstelacties zelf kunnen uitvoeren waar dit wettelijk, technisch en contractueel is toegestaan.

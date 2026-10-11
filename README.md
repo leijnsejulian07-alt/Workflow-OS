@@ -37,6 +37,14 @@ The doctor never writes to an existing SQLite database, makes platform calls or 
 
 **Important:** This is actual code and tested offline execution, **not live revenue or proven unattended operation**. Its honest readiness indicators stay `TEST_MODE_READY: NO` and `LIVE_MODE_READY: NO` until the authorized Windows runtime, scheduling, account requirements, side-effect permissions and reconciliation evidence are separately verified. Never attach real secrets to a synthetic run. Runtime device installation remains a separate task.
 
+### Durable offline Windows runner
+
+```powershell
+python scripts/workflow_os_offline_windows_runner.py
+```
+
+This command launches only the **synthetic** seven-process acceptance workflow. It uses an OS-held non-overlap lock, persists `STARTED`/`PASS`/`FAIL`/`INTERRUPTED` records in `%LOCALAPPDATA%\WorkflowOS\offline-paper\runs.jsonl`, independently verifies SQLite evidence and marks an interrupted previous invocation on the next run. It strips ambient provider credentials, rotates two bounded 2 MiB audit logs and stops safely at 512 MiB of evidence rather than silently deleting proof. A successful manual run **does not** prove Windows Task Scheduler installation, logged-out execution, live submissions or real income. No scheduled task is created by this command.
+
 ## Mission
 
 Build a unified system that discovers, evaluates, produces, publishes/deploys where explicitly authorized, reconciles revenue, and automatically keeps/scales/pauses/kills work based on collectible profit.

@@ -6,6 +6,21 @@
 
 Workflow OS is een centraal, grotendeels autonoom AI-platform om **legitieme online inkomstenmogelijkheden** te ontdekken, beoordelen, uitvoeren, meten en optimaliseren. Het is bedoeld als één besturingssysteem voor meerdere verdienmodellen, niet als verzameling los werkende bots.
 
+## Documentatie in het Nederlands en Engels
+
+**Ieder document voor menselijke lezers heeft een Nederlandse en een Engelse versie.** Technische broncode, testnamen, JSON Schema-veldnamen, omgevingsvariabelen, API-contracten en CI-configuratie behouden hun vaste machineleesbare vorm; het vertalen van die identifiers kan koppelingen kapotmaken en hoort **niet** bij het vertalen van documentatie.
+
+| Nederlands | English |
+| --- | --- |
+| [LEESME.md](LEESME.md) | [README.md](README.md) |
+| [Architectuur](docs/ARCHITECTURE.nl.md) | [Architecture](docs/ARCHITECTURE.md) |
+| [Open-sourcecomponentenregister](docs/OSS_COMPONENT_REGISTRY.nl.md) | [Open-source component registry](docs/OSS_COMPONENT_REGISTRY.md) |
+| [Beleid voor kansbesluiten](policies/opportunity-decision-policy.nl.md) | [Opportunity decision policy](policies/opportunity-decision-policy.md) |
+| [Productiebeleid](policies/production-policy.nl.md) | [Production policy](policies/production-policy.md) |
+| [Schemareferentie](docs/SCHEMAS.nl.md) | [Schema reference](docs/SCHEMAS.md) |
+
+**Afspraak voor toekomstige wijzigingen:** pas beide taalversies aan binnen dezelfde pull request. Behoud technische namen, beleidsconstanten, formules, veiligheidsregels, licentievermeldingen en bronverwijzingen exact. Leg nieuwe machineleesbare bestanden tweetalig uit in de documentatie in plaats van sleutels of uitwisselformaten te vertalen.
+
 **Commercieel doel:** richting **€ 10.000 bruto omzet per maand in december 2026**. Dit is een ambitieuze doelstelling, geen prognose of garantie. Werkelijke, aantoonbaar ontvangen inkomsten zijn belangrijker dan views, theoretische opbrengsten of schattingen.
 
 ## Uitgangspunt: zo min mogelijk handwerk

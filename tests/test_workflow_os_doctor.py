@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from workflow_os.sqlite_lifecycle import managed_connection
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCTOR = ROOT / "scripts" / "workflow_os_doctor.py"
@@ -43,7 +45,7 @@ class WorkflowOSDoctorTests(unittest.TestCase):
     def test_read_only_sqlite_unknown_and_stale_lease_are_reported(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             db_path = Path(root) / "runtime.sqlite"
-            with sqlite3.connect(db_path) as db:
+            with managed_connection(sqlite3.connect(db_path)) as db:
                 db.execute("CREATE TABLE jobs (state TEXT, lease_expires_at TEXT)")
                 db.execute("CREATE TABLE side_effects (state TEXT)")
                 db.execute("INSERT INTO jobs VALUES('UNKNOWN',NULL)")

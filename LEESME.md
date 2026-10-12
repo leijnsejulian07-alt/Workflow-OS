@@ -44,10 +44,10 @@ De doctor past een bestaande SQLite-database **niet** aan, verstuurt niets naar 
 
 ## Nieuwe werkende proef: offline Website Audit Factory
 
-Er is nu een **lokale HTML-audit** zonder extra Python-afhankelijkheden in `src/workflow_os/website_audit.py`, inclusief het startcommando `scripts/run_website_audit.py`. De controle gebruikt uitsluitend toegestane lokale UTF-8-bestanden, haalt geen websites op en produceert begrensde, herhaalbare JSON-rapporten over titels, koppen, metadata, afbeeldingen en links.
+Er is nu een **lokale HTML-audit** zonder extra Python-afhankelijkheden in `src/workflow_os/website_audit.py`, inclusief het startcommando `scripts/run_website_audit.py`. De controle gebruikt uitsluitend toegestane lokale UTF-8-bestanden, haalt geen websites op en produceert begrensde, herhaalbare JSON-rapporten én optioneel een zelfstandig **Nederlandstalig of Engelstalig HTML-adviesrapport** over titels, koppen, metadata, afbeeldingen en links.
 
 ```powershell
-python scripts/run_website_audit.py --site-dir "C:\mijn-toegestane-website" --output "C:\rapporten\audit.json"
+python scripts/run_website_audit.py --site-dir "C:\mijn-toegestane-website" --output "C:\rapporten\audit.json" --output-html "C:\rapporten\audit-nl.html" --language nl
 ```
 
 Dit is een **technische proef**, nog geen gelanceerd of winstgevend product. De audit geeft geen officiële WCAG-/SEO-certificering, neemt geen betaal- of publicatieacties en benadert geen klanten. Zie de [Nederlandse handleiding](docs/WEBSITE_AUDIT.nl.md) voor beperkingen, tests en vervolgstappen.

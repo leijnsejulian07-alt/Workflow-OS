@@ -41,10 +41,10 @@ The doctor never writes to an existing SQLite database, makes platform calls or 
 
 ## New executable pilot: offline Website Audit Factory
 
-A dependency-free, **local HTML audit** is now implemented in `src/workflow_os/website_audit.py` with a one-command CLI, `scripts/run_website_audit.py`. It accepts only authorized local UTF-8 HTML files, never fetches external sites, and produces bounded, reproducible JSON findings for basic titles, headings, metadata, images and links.
+A dependency-free, **local HTML audit** is now implemented in `src/workflow_os/website_audit.py` with a one-command CLI, `scripts/run_website_audit.py`. It accepts only authorized local UTF-8 HTML files, never fetches external sites, and produces bounded, reproducible JSON findings plus an optional standalone **NL/EN HTML report** for basic titles, headings, metadata, images and links.
 
 ```powershell
-python scripts/run_website_audit.py --site-dir "C:\my-authorized-website" --output "C:\reports\audit.json"
+python scripts/run_website_audit.py --site-dir "C:\my-authorized-website" --output "C:\reports\audit.json" --output-html "C:\reports\audit-en.html" --language en
 ```
 
 This is a **technical pilot**, not a launched or revenue-generating product. It neither certifies WCAG/SEO compliance nor makes provider calls, purchases, submissions or customer contact. See [the dedicated guide](docs/WEBSITE_AUDIT.md) for limits, tests and the next validation gates.

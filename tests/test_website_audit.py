@@ -60,7 +60,7 @@ class WebsiteAuditTests(unittest.TestCase):
         root = GOOD_HTML.replace('/about/', "about/")
         about = ABOUT_HTML.replace('href="/"', 'href="../index.html?ref=main&amp;q=1"')
         report = audit_html_pages({"index.html": root, "about/index.html": about})
-        self.assertNotIn("BROKEN_LOCAL_HTML_LINK", [f.code for f in report.findings])
+        self.assertEqual(report.findings, ())
 
     def test_external_links_are_never_fetched(self) -> None:
         html = GOOD_HTML.replace('href="/about/"', 'href="https://example.invalid/not-real"')

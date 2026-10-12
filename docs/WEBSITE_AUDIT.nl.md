@@ -10,20 +10,22 @@ De nieuwe `src/workflow_os/website_audit.py`-module controleert op een reproduce
 
 - `audit_html_pages({"index.html": "<html>...</html>"})` analyseert HTML in het geheugen, bijvoorbeeld ook HTML van de bestaande Website-in-a-Box-motor. Het resultaat is een **aanvullend advies**, nooit een vervanging voor `qa_static_site`, betaaltoestemming, bronrechten, klantgoedkeuring of publicatieregels.
 - `audit_local_site(Path("map"))` laadt beperkte lokale HTML-bestanden en wijst symlinks en te grote bestanden af.
-- `scripts/run_website_audit.py` is een zelfstandig, alleen-lezend diagnosecommando. Het produceert reproduceerbare JSON en kan een **nieuw** rapport maken zonder eerdere gegevens te overschrijven.
+- `scripts/run_website_audit.py` is een zelfstandig, alleen-lezend diagnosecommando. Het produceert reproduceerbare JSON en kan nieuwe JSON- en HTML-rapporten maken zonder eerdere gegevens te overschrijven.
+- `src/workflow_os/website_audit_report.py` maakt een deelbaar, responsief, volledig zelfstandig **Nederlands of Engels HTML-rapport**. Variabele gegevens worden veilig ge-escaped, scripts/tracking/externe assets ontbreken en de uitvoer is begrensd tot 1 MiB / 500 bevindingen.
 - `tests/test_website_audit.py` controleert goede en gebrekkige HTML, ontbrekende metadata, links, grenzen, symlinks en de veiligheid van het startcommando.
+- `tests/test_website_audit_report.py` test NL/EN-weergave, het ontbreken van nepkeurmerken, bescherming tegen HTML-injectie en de nieuwe rapportbestanden.
 
 ## Eén opdracht
 
 Voer vanuit de Workflow OS-repository met Python 3.12+ het volgende uit, **uitsluitend op bestanden die je mag controleren**:
 
 ```powershell
-python scripts/run_website_audit.py --site-dir "C:\mijn-toegestane-website" --output "C:\rapporten\audit.json"
+python scripts/run_website_audit.py --site-dir "C:\mijn-toegestane-website" --output "C:\rapporten\audit.json" --output-html "C:\rapporten\audit-nl.html" --language nl
 ```
 
 **Invoer:** een bestaande lokale map met UTF-8-bestanden met `.html` of `.htm`, maximaal 25 pagina's, 256 KiB per bestand en in totaal 2 MiB. Het aantal te bezoeken mappen is begrensd. De uitvoermap moet al bestaan. Het rapport wordt **niet** over een bestaand bestand heen geschreven. Bestandsnamen zijn relatief en een SHA-256-controlesom maakt herhaling controleerbaar.
 
-De JSON bevat een versienummer van de controles, het aantal pagina's, een inhoudscontrolegetal, aantallen bevindingen en uitleg. Een geslaagd commando is **geen bewijs** dat een website geheel toegankelijk, vindbaar, privacyveilig of snel is. De controles zijn **vuistregels** die eerst moeten worden beoordeeld voordat je commerciële claims maakt.
+De JSON bevat een versienummer van de controles, het aantal pagina's, een inhoudscontrolegetal, aantallen bevindingen en uitleg. Het optionele HTML-rapport is een **leesbaar adviesrapport**, geen kwaliteitskeurmerk. Gebruik `--language en` voor Engels. Beide uitvoerbestanden moeten vóór de run nog niet bestaan. Het aantal bevindingen is maximaal 500. Een geslaagd commando is **geen bewijs** dat een website geheel toegankelijk, vindbaar, privacyveilig of snel is. De controles zijn **vuistregels** die eerst moeten worden beoordeeld voordat je commerciële claims maakt.
 
 ## Controles die nu bestaan
 

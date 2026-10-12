@@ -18,6 +18,8 @@ Workflow OS is een centraal, grotendeels autonoom AI-platform om **legitieme onl
 | [Beleid voor kansbesluiten](policies/opportunity-decision-policy.nl.md) | [Opportunity decision policy](policies/opportunity-decision-policy.md) |
 | [Productiebeleid](policies/production-policy.nl.md) | [Production policy](policies/production-policy.md) |
 | [Schemareferentie](docs/SCHEMAS.nl.md) | [Schema reference](docs/SCHEMAS.md) |
+| [Website Audit Factory-proef](docs/WEBSITE_AUDIT.nl.md) | [Website Audit Factory pilot](docs/WEBSITE_AUDIT.md) |
+| [GitHub-projecten en YouTube-video's](docs/BUILD_RESOURCES.nl.md) | [Curated GitHub and YouTube resources](docs/BUILD_RESOURCES.md) |
 
 **Afspraak voor toekomstige wijzigingen:** pas beide taalversies aan binnen dezelfde pull request. Behoud technische namen, beleidsconstanten, formules, veiligheidsregels, licentievermeldingen en bronverwijzingen exact. Leg nieuwe machineleesbare bestanden tweetalig uit in de documentatie in plaats van sleutels of uitwisselformaten te vertalen.
 
@@ -39,6 +41,16 @@ Het eerste commando test de **bestaande** OpenShorts→Whop-worker in **zeven af
 De doctor past een bestaande SQLite-database **niet** aan, verstuurt niets naar platforms en print geen credentialwaarden. Met `--state-db` kun je een **bevoegde** Workflow OS-database uitsluitend lezen om aantallen taken, onzekere acties en verlopen leases te controleren. Met `--paper-run-dir` verifieer je het bewijs van één volledige synthetische test. `--output` maakt optioneel een **nieuw** opgeschoond JSON-rapport zonder eerder bewijs te overschrijven.
 
 **Belangrijk:** dit zijn uitgevoerde offline softwaretests, **geen echte inkomsten of bewezen autonome achtergrondwerking**. De meldingen blijven `TEST_MODE_READY: NO` en `LIVE_MODE_READY: NO` totdat de toegestane Windows-machine, de planning, accounts, toestemming voor externe acties en betaalreconciliatie afzonderlijk zijn bewezen. Gebruik nooit echte secrets in een synthetische test. Installatie op de runtimecomputer moet apart plaatsvinden.
+
+## Nieuwe werkende proef: offline Website Audit Factory
+
+Er is nu een **lokale HTML-audit** zonder extra Python-afhankelijkheden in `src/workflow_os/website_audit.py`, inclusief het startcommando `scripts/run_website_audit.py`. De controle gebruikt uitsluitend toegestane lokale UTF-8-bestanden, haalt geen websites op en produceert begrensde, herhaalbare JSON-rapporten over titels, koppen, metadata, afbeeldingen en links.
+
+```powershell
+python scripts/run_website_audit.py --site-dir "C:\mijn-toegestane-website" --output "C:\rapporten\audit.json"
+```
+
+Dit is een **technische proef**, nog geen gelanceerd of winstgevend product. De audit geeft geen officiële WCAG-/SEO-certificering, neemt geen betaal- of publicatieacties en benadert geen klanten. Zie de [Nederlandse handleiding](docs/WEBSITE_AUDIT.nl.md) voor beperkingen, tests en vervolgstappen.
 
 ## Uitgangspunt: zo min mogelijk handwerk
 

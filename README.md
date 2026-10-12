@@ -17,6 +17,8 @@ Workflow OS is a zero-touch autonomous revenue control plane for legitimate n8n/
 | [Opportunity decision policy](policies/opportunity-decision-policy.md) | [Beleid voor kansbesluiten](policies/opportunity-decision-policy.nl.md) |
 | [Production policy](policies/production-policy.md) | [Productiebeleid](policies/production-policy.nl.md) |
 | [Schema reference](docs/SCHEMAS.md) | [Schemareferentie](docs/SCHEMAS.nl.md) |
+| [Website Audit Factory pilot](docs/WEBSITE_AUDIT.md) | [Website Audit Factory-proef](docs/WEBSITE_AUDIT.nl.md) |
+| [Curated GitHub and YouTube resources](docs/BUILD_RESOURCES.md) | [GitHub-projecten en YouTube-video's](docs/BUILD_RESOURCES.nl.md) |
 
 **Localization rule for future changes:** add or update both language versions in the same PR. Preserve exact technical names, policy constants, formulas, safety gates, license notices and source citations; do not silently reinterpret operational requirements. For new machine-readable files, explain them in bilingual docs instead of translating keys or wire formats.
 
@@ -36,6 +38,16 @@ The acceptance command exercises the **existing** OpenShorts→Whop worker acros
 The doctor never writes to an existing SQLite database, makes platform calls or prints credential values. Optional `--state-db` opens a real **authorized** Workflow OS state database read-only to report job/effect counts, unknown outcomes and expired leases; `--paper-run-dir` independently checks a completed synthetic acceptance artifact. Optional `--output` writes a **new** sanitized JSON report without overwriting existing evidence.
 
 **Important:** This is actual code and tested offline execution, **not live revenue or proven unattended operation**. Its honest readiness indicators stay `TEST_MODE_READY: NO` and `LIVE_MODE_READY: NO` until the authorized Windows runtime, scheduling, account requirements, side-effect permissions and reconciliation evidence are separately verified. Never attach real secrets to a synthetic run. Runtime device installation remains a separate task.
+
+## New executable pilot: offline Website Audit Factory
+
+A dependency-free, **local HTML audit** is now implemented in `src/workflow_os/website_audit.py` with a one-command CLI, `scripts/run_website_audit.py`. It accepts only authorized local UTF-8 HTML files, never fetches external sites, and produces bounded, reproducible JSON findings for basic titles, headings, metadata, images and links.
+
+```powershell
+python scripts/run_website_audit.py --site-dir "C:\my-authorized-website" --output "C:\reports\audit.json"
+```
+
+This is a **technical pilot**, not a launched or revenue-generating product. It neither certifies WCAG/SEO compliance nor makes provider calls, purchases, submissions or customer contact. See [the dedicated guide](docs/WEBSITE_AUDIT.md) for limits, tests and the next validation gates.
 
 ## Mission
 

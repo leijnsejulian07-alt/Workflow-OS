@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit locally supplied HTML files without network access or external actions.
+r"""Audit locally supplied HTML files without network access or external actions.
 
 Usage:
     python scripts/run_website_audit.py --site-dir C:\path\to\static-site

@@ -38,12 +38,12 @@ if ($null -ne $existing) {
 
 $pythonCommand = Get-Command $PythonExe -CommandType Application -ErrorAction Stop
 $pythonPath = $pythonCommand.Source
-if (-not [IO.Path]::IsPathFullyQualified($pythonPath) -or -not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
+if (-not [IO.Path]::IsPathRooted($pythonPath) -or [IO.Path]::GetFullPath($pythonPath) -ne $pythonPath -or -not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
     throw 'Python must resolve to an existing absolute executable.'
 }
-& $pythonPath -B -c 'import sqlite3,sys; assert sys.version_info >= (3, 10)'
+& $pythonPath -B -c 'import sqlite3,sys; assert sys.version_info >= (3, 12)'
 if ($LASTEXITCODE -ne 0) {
-    throw 'Python 3.10+ with sqlite3 is required.'
+    throw 'Python 3.12+ with sqlite3 is required.'
 }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 if ($null -eq $identity -or [string]::IsNullOrWhiteSpace($identity.Name)) {

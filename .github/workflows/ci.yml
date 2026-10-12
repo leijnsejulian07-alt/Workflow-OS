@@ -25,3 +25,21 @@ jobs:
         env:
           PYTHONPATH: src
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+
+  windows-offline:
+    if: ${{ !github.event.repository.private }}
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile Windows runtime and tests
+        run: python -m compileall -q src scripts tests
+      - name: Windows full offline regression suite
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -p 'test_*.py' -v

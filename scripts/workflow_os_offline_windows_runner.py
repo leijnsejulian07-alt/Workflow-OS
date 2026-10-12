@@ -24,17 +24,10 @@ MAX_LOG_BYTES = 2 * 1024 * 1024
 MAX_EVIDENCE_BYTES = 512 * 1024 * 1024
 
 
-def _audit(root: Path, **event: object) -> None:
-    path = root / "runs.jsonl"
-    if path.exists() and path.stat().st_size >= MAX_LOG_BYTES:
-        os.replace(path, root / "runs.previous.jsonl")
-    with path.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps({"utc": datetime.now(timezone.utc).isoformat(), **event}, sort_keys=True) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-
-def _reconcile(root: Path) -> int:
+def _pending_audit_runs(root: Path) -> tuple[set[str], set[str]]:
+    """Read bounded audit generations; identify pending starts."""
     active: set[str] = set()
+    previous_starts: set[str] = set()
     for name in ("runs.previous.jsonl", "runs.jsonl"):
         path = root / name
         if not path.exists():
@@ -44,15 +37,45 @@ def _reconcile(root: Path) -> int:
         for line in path.read_text(encoding="utf-8").splitlines():
             item = json.loads(line)
             key = item.get("run_id")
-            if not isinstance(key, str):
+            if not isinstance(key, str) or not key:
                 raise RuntimeError("invalid audit record")
             if item.get("status") == "STARTED":
                 active.add(key)
+                if name == "runs.previous.jsonl":
+                    previous_starts.add(key)
             elif item.get("status") in {"PASS", "FAIL", "INTERRUPTED"}:
                 active.discard(key)
             else:
                 raise RuntimeError("invalid audit state")
-    for key in sorted(active):
+    return active, active & previous_starts
+
+
+def _audit(root: Path, **event: object) -> None:
+    path = root / "runs.jsonl"
+    previous = root / "runs.previous.jsonl"
+    line = json.dumps({"utc": datetime.now(timezone.utc).isoformat(), **event}, sort_keys=True) + "\n"
+    if path.exists() and path.stat().st_size >= MAX_LOG_BYTES:
+        if previous.exists():
+            _, unresolved = _pending_audit_runs(root)
+            if unresolved:
+                # Never overwrite an unresolved STARTED event.
+                if event.get("status") != "INTERRUPTED" or event.get("run_id") not in unresolved:
+                    raise RuntimeError("audit rotation would discard unresolved run")
+                if path.stat().st_size + len(line.encode("utf-8")) > MAX_LOG_BYTES * 2:
+                    raise RuntimeError("audit recovery capacity reached")
+            else:
+                os.replace(path, previous)
+        else:
+            os.replace(path, previous)
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(line)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _reconcile(root: Path) -> int:
+    active, previous = _pending_audit_runs(root)
+    for key in sorted(active, key=lambda run_id: (run_id not in previous, run_id)):
         _audit(root, run_id=key, status="INTERRUPTED")
     return len(active)
 

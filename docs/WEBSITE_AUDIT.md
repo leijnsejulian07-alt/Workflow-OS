@@ -10,20 +10,22 @@ The new, **dependency-free** `src/workflow_os/website_audit.py` module performs 
 
 - `audit_html_pages({"index.html": "<html>...</html>"})` can consume an in-memory collection, including HTML from the existing Website-in-a-Box builder. It is a **separate advisory check**; it does not bypass `qa_static_site`, the payment gate, rights ledger, customer approvals or deployment gates.
 - `audit_local_site(Path("folder"))` loads bounded HTML from a local directory while refusing symlinks and oversized inputs.
-- `scripts/run_website_audit.py` is a standalone read-only audit CLI. It emits deterministic JSON and can create a new output file with no-overwrite semantics.
+- `scripts/run_website_audit.py` is a standalone read-only audit CLI. It emits deterministic JSON and can create new JSON and HTML output files with no-overwrite semantics.
+- `src/workflow_os/website_audit_report.py` renders shareable, responsive, self-contained **Dutch or English HTML**. Dynamic data is HTML-escaped, scripts/tracking/remote assets are absent, and output is bounded to 1 MiB / 500 findings.
 - `tests/test_website_audit.py` exercises good and problematic sites, missing HTML metadata, link safety, input limits, symlinks and CLI isolation.
+- `tests/test_website_audit_report.py` checks NL/EN presentation, no false certification, HTML injection safety and create-only export behavior.
 
 ## One-command demo
 
 From a Python 3.12+ checkout of Workflow OS, with files you have the right to inspect:
 
 ```powershell
-python scripts/run_website_audit.py --site-dir "C:\my-authorized-static-site" --output "C:\reports\audit.json"
+python scripts/run_website_audit.py --site-dir "C:\my-authorized-static-site" --output "C:\reports\audit.json" --output-html "C:\reports\audit-nl.html" --language nl
 ```
 
 **Input requirements:** an existing local directory with UTF-8 `.html`/`.htm` pages; maximum 25 pages, 256 KiB each and 2 MiB total. Directory traversal is bounded. The output folder must already exist. Reports are created with no-overwrite mode, and an existing report will not be replaced. Relative file names and a digest support reproducibility.
 
-The JSON report contains a ruleset version, the number of pages, content SHA-256, severity counts and findings. No external services are contacted. A successful audit command **does not mean that a page passes accessibility, SEO, privacy or performance requirements**. Findings are **heuristics** and require human review before they are used as paid marketing claims.
+The JSON report contains a ruleset version, the number of pages, content SHA-256, severity counts and findings. The optional self-contained HTML report is a client-readable **advisory document**, not a quality certificate; choose `--language en` for English. Both output files must not exist before the run. The number of findings is limited to 500. No external services are contacted. A successful audit command **does not mean that a page passes accessibility, SEO, privacy or performance requirements**. Findings are **heuristics** and require human review before they are used as paid marketing claims.
 
 ## Current static checks
 

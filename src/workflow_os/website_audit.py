@@ -186,7 +186,7 @@ def _local_target(page: str, href: str) -> tuple[str | None, bool]:
     path = unquote(parts.path)
     if not path:
         return None, False
-    if "\\" in path or "\x00" in path or any(seg == ".." for seg in path.split("/")):
+    if "\\" in path or "\x00" in path:
         return None, True
     base = "" if path.startswith("/") else posixpath.dirname(page)
     relative = posixpath.normpath(posixpath.join(base, path.lstrip("/")))

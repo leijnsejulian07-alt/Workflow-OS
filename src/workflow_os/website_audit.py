@@ -22,6 +22,7 @@ MAX_PAGES = 25
 MAX_PAGE_BYTES = 256 * 1024
 MAX_TOTAL_BYTES = 2 * 1024 * 1024
 MAX_DIRECTORIES = 250
+MAX_FINDINGS = 500
 _ALLOWED_SUFFIXES = {".htm", ".html"}
 _PATH_PATTERN = re.compile(r"^[^\x00-\x1f\x7f\\]+$")
 
@@ -232,6 +233,8 @@ def audit_html_pages(pages: Mapping[str, str]) -> WebsiteAuditReport:
         inspector.close()
 
         def issue(code: str, severity: str, description: str) -> None:
+            if len(results) >= MAX_FINDINGS:
+                raise ValueError("audit findings exceed safe report limit")
             results.append(AuditFinding(name, code, severity, description))
 
         if not inspector.language or not re.fullmatch(r"[a-zA-Z]{2}(?:-[a-zA-Z]{2})?", inspector.language):
